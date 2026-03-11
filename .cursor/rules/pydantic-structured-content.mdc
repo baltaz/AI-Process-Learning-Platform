@@ -1,0 +1,22 @@
+---
+description: Reuse canonical Pydantic models for structured AI content
+globs: apps/api/app/{schemas,services}/**/*.py
+alwaysApply: false
+---
+
+# Structured AI Content With Pydantic
+
+- Treat structured AI-generated payloads as canonical Pydantic models, not loose `dict` blobs.
+- When a JSON field has an expected shape, define or reuse a shared schema model and validate before persisting.
+- Prefer reusing the same canonical Pydantic models in FastAPI `response_model` shapes when the API contract matches the persisted structure.
+- Do not write raw LLM output directly into `JSONB` fields such as `structure_json` or `question_json`.
+- Normalize provider variations inside validators or schema adapters, then persist the normalized `model_dump()`.
+
+## Preferred Pattern
+
+```python
+validated = CanonicalModel.model_validate(payload).model_dump(exclude_none=True)
+```
+
+- Keep persistence validation in services/pipelines.
+- Keep API schemas typed with canonical nested models instead of `dict` when possible.
