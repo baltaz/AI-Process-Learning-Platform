@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarClock, FileStack, FileVideo, Link2, Loader2, Sparkles, Upload } from "lucide-react";
+import { ArrowLeft, CalendarClock, FileStack, FileVideo, Link2, Loader2, Sparkles, Trash2, Upload } from "lucide-react";
 import api from "@/services/api";
 
 interface ProcedureVersion {
@@ -39,6 +39,18 @@ interface ProcedureDetail {
 interface TaskOption {
   id: string;
   title: string;
+}
+
+function getErrorMessage(error: unknown, fallback: string) {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "response" in error &&
+    typeof (error as { response?: { data?: { detail?: string } } }).response?.data?.detail === "string"
+  ) {
+    return (error as { response?: { data?: { detail?: string } } }).response!.data!.detail!;
+  }
+  return fallback;
 }
 
 export default function ProcedureDetailPage() {
@@ -141,6 +153,16 @@ export default function ProcedureDetailPage() {
     },
   });
 
+  const deleteMutation = useMutation({
+    mutationFn: () => api.delete(`/procedures/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["procedures"] });
+      queryClient.invalidateQueries({ queryKey: ["tasks"] });
+      queryClient.invalidateQueries({ queryKey: ["trainings"] });
+      navigate("/procedures");
+    },
+  });
+
   useEffect(() => {
     function handlePointerDown(event: MouseEvent) {
       if (!taskPickerRef.current?.contains(event.target as Node)) {
@@ -167,23 +189,61 @@ export default function ProcedureDetailPage() {
       return matchesSearch && !isAlreadyLinked;
     }) ?? [];
 
+  function handleDelete() {
+    if (!procedure || deleteMutation.isPending) return;
+    const confirmed = window.confirm(
+      `¿Seguro que quieres eliminar el procedimiento "${procedure.title}"? También se eliminarán sus versiones y trainings derivados.`
+    );
+    if (!confirmed) return;
+    deleteMutation.mutate();
+  }
+
   return (
     <div className="mx-auto max-w-5xl space-y-6">
-      <div className="rounded-3xl border border-gray-200 bg-white p-6">
-        <p className="text-xs font-semibold uppercase tracking-wide text-indigo-600">{procedure.code}</p>
-        <h1 className="mt-1 text-2xl font-bold text-gray-900">{procedure.title}</h1>
-        <p className="mt-2 text-sm text-gray-600">{procedure.description || "Sin descripción."}</p>
-        <div className="mt-4 flex flex-wrap gap-2 text-xs text-gray-500">
-          <span className="rounded-full bg-gray-100 px-2.5 py-1">
-            Owner: {procedure.owner_role_name || "Sin rol"}
-          </span>
-          <span className="rounded-full bg-indigo-50 px-2.5 py-1 text-indigo-700">
-            {procedure.versions.length} versiones
-          </span>
-          <span className="rounded-full bg-green-50 px-2.5 py-1 text-green-700">
-            {procedure.versions.filter((version) => version.derived_training).length} trainings derivados
-          </span>
+      <div className="space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <Link
+            to="/procedures"
+            className="inline-flex items-center gap-2 text-sm font-medium text-indigo-600 hover:text-indigo-700"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Volver a procedimientos
+          </Link>
+          <button
+            type="button"
+            onClick={handleDelete}
+            disabled={deleteMutation.isPending}
+            className="inline-flex items-center gap-2 rounded-lg border border-red-200 px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {deleteMutation.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Trash2 className="h-4 w-4" />
+            )}
+            Eliminar procedimiento
+          </button>
         </div>
+        <div className="rounded-3xl border border-gray-200 bg-white p-6">
+          <p className="text-xs font-semibold uppercase tracking-wide text-indigo-600">{procedure.code}</p>
+          <h1 className="mt-1 text-2xl font-bold text-gray-900">{procedure.title}</h1>
+          <p className="mt-2 text-sm text-gray-600">{procedure.description || "Sin descripción."}</p>
+          <div className="mt-4 flex flex-wrap gap-2 text-xs text-gray-500">
+            <span className="rounded-full bg-gray-100 px-2.5 py-1">
+              Owner: {procedure.owner_role_name || "Sin rol"}
+            </span>
+            <span className="rounded-full bg-indigo-50 px-2.5 py-1 text-indigo-700">
+              {procedure.versions.length} versiones
+            </span>
+            <span className="rounded-full bg-green-50 px-2.5 py-1 text-green-700">
+              {procedure.versions.filter((version) => version.derived_training).length} trainings derivados
+            </span>
+          </div>
+        </div>
+        {deleteMutation.isError && (
+          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {getErrorMessage(deleteMutation.error, "No se pudo eliminar el procedimiento.")}
+          </div>
+        )}
       </div>
 
       <div className="grid gap-6 lg:grid-cols-[1.4fr_1fr]">

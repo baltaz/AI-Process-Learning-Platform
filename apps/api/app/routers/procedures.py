@@ -2,7 +2,7 @@ import asyncio
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -121,6 +121,20 @@ async def get_procedure(procedure_id: uuid.UUID, db: AsyncSession = Depends(get_
             for link in task_links
         ],
     )
+
+
+@router.delete("/{procedure_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_procedure(
+    procedure_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    procedure = (await db.execute(select(Procedure.id).where(Procedure.id == procedure_id))).scalar_one_or_none()
+    if procedure is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Procedure not found")
+
+    await db.execute(delete(Procedure).where(Procedure.id == procedure_id))
+    await db.commit()
 
 
 @router.post("/{procedure_id}/versions", response_model=ProcedureVersionOut, status_code=status.HTTP_201_CREATED)
