@@ -5,11 +5,18 @@ from pydantic import BaseModel, Field
 from app.schemas.generated_content import GeneratedTrainingStructure
 
 
+class ProcedureVersionSourceAssetWrite(BaseModel):
+    storage_key: str
+    mime: str | None = None
+    size: int | None = None
+    asset_type: str = "video"
+
+
 class ProcedureCreate(BaseModel):
-    code: str
-    title: str
+    title: str = Field(min_length=1)
     description: str | None = None
     owner_role_id: uuid.UUID | None = None
+    source_asset: ProcedureVersionSourceAssetWrite | None = None
 
 
 class ProcedureVersionCreate(BaseModel):
@@ -19,13 +26,6 @@ class ProcedureVersionCreate(BaseModel):
     content_json: dict | None = None
     content_text: str = Field(min_length=1)
     status: str = "draft"
-
-
-class ProcedureVersionSourceAssetWrite(BaseModel):
-    storage_key: str
-    mime: str | None = None
-    size: int | None = None
-    asset_type: str = "video"
 
 
 class TaskProcedureLinkCreate(BaseModel):

@@ -4,12 +4,15 @@ import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import Layout from "./components/Layout";
 import { getDemoRole, isAuthenticated, type DemoRole } from "./lib/auth";
 import { getHomePath } from "./lib/demoAccess";
+import AdminIncidentsPage from "./pages/AdminIncidentsPage";
+import AdminRolesPage from "./pages/AdminRolesPage";
+import AdminUsersPage from "./pages/AdminUsersPage";
 import AssignmentsPage from "./pages/AssignmentsPage";
 import ChangeEventsPage from "./pages/ChangeEventsPage";
 import CompliancePage from "./pages/CompliancePage";
 import DashboardPage from "./pages/DashboardPage";
 import DevSeedPage from "./pages/DevSeedPage";
-import IncidentsPage from "./pages/IncidentsPage";
+import IncidentDetailPage from "./pages/IncidentDetailPage";
 import LoginPage from "./pages/LoginPage";
 import OperatorHomePage from "./pages/OperatorHomePage";
 import OperatorIncidentDetailPage from "./pages/OperatorIncidentDetailPage";
@@ -18,15 +21,16 @@ import OperatorProcedureDetailPage from "./pages/OperatorProcedureDetailPage";
 import OperatorProceduresPage from "./pages/OperatorProceduresPage";
 import OperatorTrainingPage from "./pages/OperatorTrainingPage";
 import OperatorTrainingsPage from "./pages/OperatorTrainingsPage";
+import ProcedureCreatePage from "./pages/ProcedureCreatePage";
 import ProcedureDetailPage from "./pages/ProcedureDetailPage";
+import ProcedureUpdatePage from "./pages/ProcedureUpdatePage";
 import ProceduresPage from "./pages/ProceduresPage";
 import ProfilePage from "./pages/ProfilePage";
 import RoleDetailPage from "./pages/RoleDetailPage";
-import RolesPage from "./pages/RolesPage";
 import SearchPage from "./pages/SearchPage";
 import TrainingBuilderPage from "./pages/TrainingBuilderPage";
 import TrainingsPage from "./pages/TrainingsPage";
-import UsersPage from "./pages/UsersPage";
+import UserDetailPage from "./pages/UserDetailPage";
 
 interface AppRoute {
   path: string;
@@ -36,19 +40,25 @@ interface AppRoute {
 const appRoutesByRole: Record<DemoRole, AppRoute[]> = {
   admin: [
     { path: "dashboard", element: <DashboardPage /> },
-    { path: "procedures", element: <ProceduresPage /> },
-    { path: "procedures/:id", element: <ProcedureDetailPage /> },
-    { path: "roles", element: <RolesPage /> },
+    { path: "users", element: <AdminUsersPage /> },
+    { path: "users/new", element: <UserDetailPage /> },
+    { path: "users/:id", element: <UserDetailPage /> },
+    { path: "roles", element: <AdminRolesPage /> },
     { path: "roles/:id", element: <RoleDetailPage /> },
-    { path: "users", element: <UsersPage /> },
+    { path: "procedures", element: <ProceduresPage /> },
+    { path: "procedures/new", element: <ProcedureCreatePage /> },
+    { path: "procedures/:id", element: <ProcedureDetailPage /> },
+    { path: "procedures/:id/update", element: <ProcedureUpdatePage /> },
+    { path: "incidents", element: <AdminIncidentsPage /> },
+    { path: "incidents/new", element: <IncidentDetailPage /> },
+    { path: "incidents/:id", element: <IncidentDetailPage /> },
+    { path: "search", element: <SearchPage /> },
+    { path: "profile", element: <ProfilePage /> },
     { path: "compliance", element: <CompliancePage /> },
     { path: "change-events", element: <ChangeEventsPage /> },
     { path: "trainings", element: <TrainingsPage /> },
     { path: "trainings/:id", element: <TrainingBuilderPage /> },
-    { path: "search", element: <SearchPage /> },
     { path: "assignments", element: <AssignmentsPage /> },
-    { path: "incidents", element: <IncidentsPage /> },
-    { path: "profile", element: <ProfilePage /> },
     { path: "dev/seed", element: <DevSeedPage /> },
   ],
   operator: [

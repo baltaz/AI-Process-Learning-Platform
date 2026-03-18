@@ -1,25 +1,44 @@
-import { Outlet, NavLink, useNavigate } from "react-router-dom";
+import { FormEvent, useEffect, useState } from "react";
+import { Outlet, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { clearAuth, getDemoRole, getStoredUser } from "@/lib/auth";
 import { getNavItemsForRole, getSecondaryActionsForRole, roleLabels } from "@/lib/demoAccess";
 import {
+  Search,
   GitBranch,
   LogOut,
   Menu,
   X,
 } from "lucide-react";
-import { useState } from "react";
 
 export default function Layout() {
   const user = getStoredUser();
   const role = getDemoRole() ?? "operator";
   const navItems = getNavItemsForRole(role);
   const secondaryActions = getSecondaryActionsForRole(role);
+  const location = useLocation();
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [searchValue, setSearchValue] = useState("");
+
+  useEffect(() => {
+    if (!location.pathname.startsWith("/search")) {
+      return;
+    }
+
+    const params = new URLSearchParams(location.search);
+    setSearchValue(params.get("q") ?? "");
+  }, [location.pathname, location.search]);
 
   function handleLogout() {
     clearAuth();
     navigate("/login");
+  }
+
+  function handleSearchSubmit(event: FormEvent) {
+    event.preventDefault();
+    const value = searchValue.trim();
+    if (!value) return;
+    navigate(`/search?q=${encodeURIComponent(value)}`);
   }
 
   return (
@@ -94,7 +113,22 @@ export default function Layout() {
           >
             {sidebarOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
           </button>
-          <div className="flex-1" />
+          {role === "admin" ? (
+            <form onSubmit={handleSearchSubmit} className="hidden max-w-md flex-1 lg:block">
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                <input
+                  type="text"
+                  value={searchValue}
+                  onChange={(event) => setSearchValue(event.target.value)}
+                  placeholder="Buscar procedimientos..."
+                  className="w-full rounded-lg border border-gray-300 py-2 pl-9 pr-3 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                />
+              </div>
+            </form>
+          ) : (
+            <div className="flex-1" />
+          )}
           {secondaryActions.length > 0 && (
             <div className="flex items-center gap-2">
               {secondaryActions.map(({ to, label, icon: Icon }) => (

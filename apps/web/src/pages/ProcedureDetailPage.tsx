@@ -1,24 +1,15 @@
-import { useState } from "react";
+import { useMemo } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  ArrowLeft,
-  CalendarClock,
-  FileStack,
-  FileVideo,
-  Link2,
-  Loader2,
-  Sparkles,
-  Trash2,
-  Unlink,
-  Upload,
-} from "lucide-react";
+import { AlertCircle, ArrowLeft, FileText, Loader2, Sparkles, Trash2 } from "lucide-react";
+
 import api from "@/services/api";
 
 interface ProcedureVersion {
   id: string;
   version_number: number;
   status: string;
+  created_at: string;
   change_summary?: string | null;
   change_reason?: string | null;
   effective_from?: string | null;
@@ -53,13 +44,58 @@ interface ProcedureDetail {
   description?: string | null;
   owner_role_name?: string | null;
   versions: ProcedureVersion[];
-  roles: Array<{ id: string; role_id: string; role_code: string; role_name: string; is_required: boolean }>;
 }
 
-interface RoleOption {
+interface IncidentRecord {
   id: string;
-  code: string;
-  name: string;
+  description: string;
+  severity: string;
+  location?: string | null;
+  created_at: string;
+}
+
+interface IncidentAnalysisFinding {
+  id: string;
+  procedure_id?: string | null;
+  procedure_version_id?: string | null;
+  confidence?: number | null;
+  reasoning_summary?: string | null;
+  recommended_action?: string | null;
+  status: string;
+  created_at: string;
+}
+
+interface IncidentAnalysisRun {
+  id: string;
+  incident_id: string;
+  analysis_summary?: string | null;
+  resolution_summary?: string | null;
+  created_at: string;
+  findings: IncidentAnalysisFinding[];
+}
+
+interface ProcedureIncidentContext {
+  incident: IncidentRecord;
+  run: IncidentAnalysisRun;
+  finding: IncidentAnalysisFinding;
+  pendingCount: number;
+}
+
+interface QuizQuestion {
+  id: string;
+  question_json: {
+    question: string;
+    options: string[];
+    correct_answer: number;
+    verified?: boolean;
+    position?: number | null;
+  };
+}
+
+interface SourceDocumentItem {
+  title: string;
+  detail: string;
+  meta?: string | null;
 }
 
 const ACTIVE_SOURCE_PROCESSING_STATUSES = [
@@ -81,6 +117,13 @@ const SOURCE_PROCESSING_STATUS_LABELS: Record<string, string> = {
   FAILED: "Error",
 };
 
+const SEVERITY_LABELS: Record<string, string> = {
+  low: "Baja",
+  medium: "Media",
+  high: "Alta",
+  critical: "Crítica",
+};
+
 function getErrorMessage(error: unknown, fallback: string) {
   if (
     typeof error === "object" &&
@@ -97,18 +140,101 @@ function getSourceProcessingLabel(status: string) {
   return SOURCE_PROCESSING_STATUS_LABELS[status] ?? status;
 }
 
+function getSeverityLabel(severity?: string | null) {
+  if (!severity) return null;
+  return SEVERITY_LABELS[severity] ?? severity;
+}
+
+function formatDate(value?: string | null) {
+  if (!value) return "Sin fecha";
+  return new Date(value).toLocaleDateString("es-AR");
+}
+
+function buildGeneratedText(version: ProcedureVersion | null, context: ProcedureIncidentContext | null): string[] {
+  const parts = context
+    ? [
+        context.run.analysis_summary,
+        context.finding.reasoning_summary,
+        context.finding.recommended_action,
+        context.run.resolution_summary,
+      ]
+    : [];
+
+  const normalized = parts
+    .map((value) => value?.trim())
+    .filter((value): value is string => Boolean(value));
+
+  if (normalized.length > 0) {
+    return Array.from(new Set(normalized));
+  }
+
+  const structure = version?.source_result?.structure;
+  if (structure) {
+    const summary: string[] = [];
+    if (structure.objectives.length > 0) {
+      summary.push(`Objetivos detectados: ${structure.objectives.join(", ")}.`);
+    }
+    if (structure.steps.length > 0) {
+      summary.push(`Pasos sugeridos: ${structure.steps.map((step) => step.title).join(", ")}.`);
+    }
+    if (structure.critical_points.length > 0) {
+      summary.push(
+        `Puntos críticos identificados: ${structure.critical_points.map((point) => point.text).join(", ")}.`
+      );
+    }
+    if (summary.length > 0) {
+      return summary;
+    }
+  }
+
+  if (version?.content_text?.trim()) {
+    return [version.content_text.trim()];
+  }
+
+  return ["Todavía no hay contenido generado disponible para este procedimiento."];
+}
+
+function buildSourceDocumentItems(version: ProcedureVersion | null): SourceDocumentItem[] {
+  if (!version) return [];
+
+  const items: SourceDocumentItem[] = [];
+  if (version.source_storage_key) {
+    items.push({
+      title: "Fuente principal",
+      detail: version.source_storage_key.split("/").pop() || version.source_storage_key,
+      meta: [
+        version.source_asset_type || "archivo",
+        version.source_size ? `${(version.source_size / 1024 / 1024).toFixed(1)} MB` : null,
+        getSourceProcessingLabel(version.source_processing_status),
+      ]
+        .filter(Boolean)
+        .join(" · "),
+    });
+  }
+
+  if (version.source_result?.transcript_raw) {
+    items.push({
+      title: "Transcripción",
+      detail: `${version.source_result.transcript_raw.split(/\s+/).length} palabras extraídas`,
+      meta: "Artefacto derivado",
+    });
+  }
+
+  if (version.source_result?.structure) {
+    items.push({
+      title: "Estructura extraída",
+      detail: version.source_result.structure.title,
+      meta: `${version.source_result.structure.steps.length} pasos · ${version.source_result.structure.critical_points.length} puntos críticos`,
+    });
+  }
+
+  return items;
+}
+
 export default function ProcedureDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [versionForm, setVersionForm] = useState({
-    change_summary: "",
-    change_reason: "",
-    effective_from: "",
-    content_text: "",
-  });
-  const [roleId, setRoleId] = useState("");
-  const [versionFiles, setVersionFiles] = useState<Record<string, File | null>>({});
 
   const { data: procedure, isLoading } = useQuery<ProcedureDetail>({
     queryKey: ["procedure", id],
@@ -125,68 +251,67 @@ export default function ProcedureDetailPage() {
     },
   });
 
-  const { data: roles } = useQuery<RoleOption[]>({
-    queryKey: ["roles"],
-    queryFn: () => api.get("/roles").then((r) => r.data),
-  });
+  const latestUpdate = useMemo(() => {
+    const versions = procedure?.versions ?? [];
+    return [...versions].sort((a, b) => b.version_number - a.version_number)[0] ?? null;
+  }, [procedure]);
 
-  const createVersionMutation = useMutation({
-    mutationFn: () =>
-      api.post(`/procedures/${id}/versions`, {
-        ...versionForm,
-        effective_from: versionForm.effective_from || null,
-        status: "draft",
-      }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["procedure", id] });
-      setVersionForm({ change_summary: "", change_reason: "", effective_from: "", content_text: "" });
-    },
-  });
+  const incidentContextQuery = useQuery<ProcedureIncidentContext | null>({
+    queryKey: ["procedure-incident-context", id, procedure?.versions.map((version) => version.id).join(",")],
+    enabled: Boolean(procedure?.id),
+    queryFn: async () => {
+      const incidents = await api.get("/incidents").then((r) => r.data as IncidentRecord[]);
+      const currentProcedure = procedure;
+      if (!currentProcedure) return null;
 
-  const linkRoleMutation = useMutation({
-    mutationFn: () =>
-      api.post("/roles/procedure-links", {
-        role_id: roleId,
-        procedure_id: id,
-        is_required: true,
-      }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["procedure", id] });
-      queryClient.invalidateQueries({ queryKey: ["roles"] });
-      setRoleId("");
-    },
-  });
+      const versionIds = new Set(currentProcedure.versions.map((version) => version.id));
+      const incidentRuns = await Promise.all(
+        incidents.map(async (incident) => ({
+          incident,
+          runs: await api.get(`/incidents/${incident.id}/analysis-runs`).then((r) => r.data as IncidentAnalysisRun[]),
+        })),
+      );
 
-  const unlinkRoleMutation = useMutation({
-    mutationFn: (linkId: string) => api.delete(`/roles/procedure-links/${linkId}`).then((r) => r.data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["procedure", id] });
-      queryClient.invalidateQueries({ queryKey: ["roles"] });
-    },
-  });
+      const matches = incidentRuns.flatMap(({ incident, runs }) =>
+        runs.flatMap((run) =>
+          run.findings
+            .filter(
+              (finding) =>
+                finding.procedure_id === currentProcedure.id ||
+                (finding.procedure_version_id ? versionIds.has(finding.procedure_version_id) : false),
+            )
+            .map((finding) => ({ incident, run, finding })),
+        ),
+      );
 
-  const uploadSourceMutation = useMutation({
-    mutationFn: async ({ versionId, file }: { versionId: string; file: File }) => {
-      const { data: presign } = await api.post("/uploads/presign", {
-        filename: file.name,
-        content_type: file.type,
+      if (!matches.length) {
+        return null;
+      }
+
+      const pendingCount = new Set(
+        matches.filter((match) => match.finding.status === "suggested").map((match) => match.incident.id),
+      ).size;
+
+      const sortedMatches = [...matches].sort((left, right) => {
+        const leftPriority = left.finding.status === "suggested" ? 0 : 1;
+        const rightPriority = right.finding.status === "suggested" ? 0 : 1;
+        if (leftPriority !== rightPriority) {
+          return leftPriority - rightPriority;
+        }
+        return new Date(right.run.created_at).getTime() - new Date(left.run.created_at).getTime();
       });
-      await fetch(presign.presigned_url, {
-        method: "PUT",
-        body: file,
-        headers: { "Content-Type": file.type },
-      });
-      await api.post(`/procedures/versions/${versionId}/source-asset`, {
-        storage_key: presign.storage_key,
-        mime: file.type,
-        size: file.size,
-        asset_type: "video",
-      });
+
+      return { ...sortedMatches[0], pendingCount };
     },
-    onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: ["procedure", id] });
-      setVersionFiles((current) => ({ ...current, [variables.versionId]: null }));
-    },
+  });
+
+  const { data: quiz = [], isLoading: quizLoading } = useQuery<QuizQuestion[]>({
+    queryKey: ["procedure-quiz", latestUpdate?.derived_training?.id],
+    queryFn: () =>
+      api
+        .get(`/trainings/${latestUpdate?.derived_training?.id}/quiz`)
+        .then((r) => r.data as QuizQuestion[]),
+    enabled: Boolean(latestUpdate?.derived_training?.id),
   });
 
   const generateTrainingMutation = useMutation({
@@ -219,20 +344,21 @@ export default function ProcedureDetailPage() {
     );
   }
 
-  const availableRoles =
-    roles?.filter((role) => !procedure.roles.some((linked) => linked.role_id === role.id)) ?? [];
+  const updateHistory = [...procedure.versions].sort((a, b) => b.version_number - a.version_number);
+  const sourceDocuments = buildSourceDocumentItems(latestUpdate);
+  const generatedText = buildGeneratedText(latestUpdate, incidentContextQuery.data ?? null);
 
   function handleDelete() {
-    if (!procedure || deleteMutation.isPending) return;
+    if (deleteMutation.isPending) return;
     const confirmed = window.confirm(
-      `¿Seguro que quieres eliminar el procedimiento "${procedure.title}"? También se eliminarán sus versiones y trainings derivados.`
+      `¿Seguro que quieres eliminar el procedimiento "${procedure?.title}"? También se eliminarán sus actualizaciones y trainings derivados.`
     );
     if (!confirmed) return;
     deleteMutation.mutate();
   }
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6">
+    <div className="mx-auto max-w-6xl space-y-6">
       <div className="space-y-3">
         <div className="flex items-center justify-between gap-3">
           <Link
@@ -242,36 +368,67 @@ export default function ProcedureDetailPage() {
             <ArrowLeft className="h-4 w-4" />
             Volver a procedimientos
           </Link>
-          <button
-            type="button"
-            onClick={handleDelete}
-            disabled={deleteMutation.isPending}
-            className="inline-flex items-center gap-2 rounded-lg border border-red-200 px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {deleteMutation.isPending ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Trash2 className="h-4 w-4" />
-            )}
-            Eliminar procedimiento
-          </button>
+          <div className="flex flex-wrap items-center gap-3">
+            <Link
+              to={`/procedures/${procedure.id}/update`}
+              className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-indigo-700"
+            >
+              Actualizar
+            </Link>
+            <button
+              type="button"
+              onClick={handleDelete}
+              disabled={deleteMutation.isPending}
+              className="inline-flex items-center gap-2 rounded-lg border border-red-200 px-4 py-2.5 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-60"
+            >
+              {deleteMutation.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Trash2 className="h-4 w-4" />
+              )}
+              Eliminar
+            </button>
+          </div>
         </div>
-        <div className="rounded-3xl border border-gray-200 bg-white p-6">
-          <p className="text-xs font-semibold uppercase tracking-wide text-indigo-600">{procedure.code}</p>
-          <h1 className="mt-1 text-2xl font-bold text-gray-900">{procedure.title}</h1>
-          <p className="mt-2 text-sm text-gray-600">{procedure.description || "Sin descripción."}</p>
-          <div className="mt-4 flex flex-wrap gap-2 text-xs text-gray-500">
+
+        <section className="rounded-3xl border border-gray-200 bg-white p-6">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center gap-3">
+                <h1 className="text-3xl font-bold text-gray-900">{procedure.title}</h1>
+                {(incidentContextQuery.data?.pendingCount ?? 0) > 0 && (
+                  <span className="inline-flex items-center gap-2 rounded-full border border-red-200 bg-red-50 px-3 py-1 text-xs font-medium text-red-700">
+                    <AlertCircle className="h-3.5 w-3.5" />
+                    {incidentContextQuery.data?.pendingCount} incidencia
+                    {incidentContextQuery.data?.pendingCount === 1 ? " pendiente" : "s pendientes"}
+                  </span>
+                )}
+              </div>
+              <p className="max-w-4xl text-base text-gray-600">
+                {procedure.description || "Todavía no hay una descripción cargada para este procedimiento."}
+              </p>
+            </div>
+            <div className="rounded-2xl bg-gray-50 px-4 py-3 text-right text-sm text-gray-600">
+              <p className="font-medium text-gray-900">{procedure.code}</p>
+              <p className="mt-1">
+                {latestUpdate ? `Actualización vigente: Act. ${latestUpdate.version_number}` : "Sin actualizaciones"}
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-5 flex flex-wrap gap-2 text-xs text-gray-500">
             <span className="rounded-full bg-gray-100 px-2.5 py-1">
               Owner: {procedure.owner_role_name || "Sin rol"}
             </span>
             <span className="rounded-full bg-indigo-50 px-2.5 py-1 text-indigo-700">
-              {procedure.versions.length} versiones
+              {procedure.versions.length} actualizaciones
             </span>
-            <span className="rounded-full bg-green-50 px-2.5 py-1 text-green-700">
-              {procedure.versions.filter((version) => version.derived_training).length} trainings derivados
+            <span className="rounded-full bg-gray-100 px-2.5 py-1">
+              {latestUpdate?.effective_from ? `Vigencia ${formatDate(latestUpdate.effective_from)}` : "Sin vigencia definida"}
             </span>
           </div>
-        </div>
+        </section>
+
         {deleteMutation.isError && (
           <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
             {getErrorMessage(deleteMutation.error, "No se pudo eliminar el procedimiento.")}
@@ -279,415 +436,201 @@ export default function ProcedureDetailPage() {
         )}
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-[1.4fr_1fr]">
-        <div className="space-y-6">
-          <section className="rounded-2xl border border-gray-200 bg-white p-5">
-            <div className="mb-4 flex items-center gap-2">
-              <FileStack className="h-5 w-5 text-indigo-600" />
-              <h2 className="text-lg font-semibold text-gray-900">Versiones</h2>
+      <section className="rounded-3xl border border-gray-200 bg-white p-6">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-xl font-semibold text-gray-900">Resultado del proceso en texto generado por la IA</h2>
+            <p className="mt-1 text-sm text-gray-500">
+              {incidentContextQuery.data
+                ? "Resumen compuesto desde la incidencia relacionada y su análisis."
+                : "Resumen compuesto con la mejor información disponible de la actualización vigente."}
+            </p>
+          </div>
+          {incidentContextQuery.data && (
+            <div className="rounded-full bg-gray-100 px-3 py-1 text-xs font-medium text-gray-700">
+              {getSeverityLabel(incidentContextQuery.data.incident.severity) || "Incidencia"}
             </div>
+          )}
+        </div>
+
+        <div className="mt-6 rounded-2xl border border-gray-200 px-5 py-5">
+          {incidentContextQuery.data && (
+            <div className="mb-4 rounded-xl bg-gray-50 px-4 py-3 text-sm text-gray-600">
+              {incidentContextQuery.data.incident.description}
+            </div>
+          )}
+          <div className="space-y-4 text-sm leading-7 text-gray-700">
+            {generatedText.map((paragraph, index) => (
+              <p key={`${procedure.id}-generated-${index}`}>{paragraph}</p>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="rounded-3xl border border-gray-200 bg-white p-6">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-xl font-semibold text-gray-900">Documentos fuente de la actualización</h2>
+            <p className="mt-1 text-sm text-gray-500">
+              Fuente y artefactos disponibles para la actualización vigente.
+            </p>
+          </div>
+          {latestUpdate && (
+            <span className="rounded-full bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-700">
+              Act. {latestUpdate.version_number}
+            </span>
+          )}
+        </div>
+
+        <div className="mt-6 rounded-2xl border border-gray-200 px-5 py-4">
+          {!sourceDocuments.length ? (
+            <p className="text-sm text-gray-500">Todavía no hay documentos fuente asociados a esta actualización.</p>
+          ) : (
             <div className="space-y-3">
-              {procedure.versions.map((version) => (
-                <div key={version.id} className="rounded-xl border border-gray-200 p-4">
-                  <div className="flex items-center justify-between gap-4">
-                    <div>
-                      <p className="text-sm font-semibold text-gray-900">v{version.version_number}</p>
-                      <p className="text-xs text-gray-500">{version.status}</p>
-                    </div>
-                    {version.effective_from && (
-                      <span className="inline-flex items-center gap-1 text-xs text-gray-500">
-                        <CalendarClock className="h-3.5 w-3.5" />
-                        {new Date(version.effective_from).toLocaleDateString("es-AR")}
-                      </span>
-                    )}
+              {sourceDocuments.map((document, index) => (
+                <div key={`${document.title}-${index}`} className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-sm font-medium text-gray-900">{document.title}</p>
+                    <p className="mt-1 text-sm text-gray-600">{document.detail}</p>
                   </div>
-                  {version.change_summary && (
-                    <p className="mt-3 text-sm text-gray-700">{version.change_summary}</p>
-                  )}
-                  {version.content_text && (
-                    <p className="mt-2 text-xs text-gray-500">{version.content_text}</p>
-                  )}
-                  <div className="mt-4 rounded-lg border border-gray-100 bg-gray-50 p-3">
-                    <div className="flex items-center gap-2">
-                      <FileVideo className="h-4 w-4 text-indigo-600" />
-                      <p className="text-sm font-medium text-gray-900">Video fuente</p>
-                    </div>
-                    {version.source_storage_key ? (
-                      <p className="mt-2 text-xs text-gray-600">
-                        {version.source_storage_key.split("/").pop()}
-                        {version.source_size
-                          ? ` · ${(version.source_size / 1024 / 1024).toFixed(1)} MB`
-                          : ""}
-                      </p>
-                    ) : (
-                      <p className="mt-2 text-xs text-amber-700">Todavía no hay video cargado.</p>
-                    )}
-                    <div className="mt-3 flex flex-wrap items-center gap-2">
-                      <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100">
-                        <Upload className="h-4 w-4" />
-                        {version.source_storage_key ? "Reemplazar video" : "Subir video"}
-                        <input
-                          type="file"
-                          accept="video/*"
-                          className="hidden"
-                          onChange={(event) =>
-                            setVersionFiles((current) => ({
-                              ...current,
-                              [version.id]: event.target.files?.[0] ?? null,
-                            }))
-                          }
-                        />
-                      </label>
-                      {versionFiles[version.id] && (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            uploadSourceMutation.mutate({
-                              versionId: version.id,
-                              file: versionFiles[version.id] as File,
-                            })
-                          }
-                          disabled={uploadSourceMutation.isPending}
-                          className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-60"
-                        >
-                          {uploadSourceMutation.isPending ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <Upload className="h-4 w-4" />
-                          )}
-                          Confirmar upload
-                        </button>
-                      )}
-                    </div>
-                    {versionFiles[version.id] && (
-                      <p className="mt-2 text-xs text-gray-500">{versionFiles[version.id]?.name}</p>
-                    )}
-                    <div className="mt-3 rounded-md bg-white/80 px-3 py-2 text-xs text-gray-600">
-                      <span className="font-medium text-gray-800">Source processing:</span>{" "}
-                      {getSourceProcessingLabel(version.source_processing_status)}
-                      {version.source_processed_at && (
-                        <span className="text-gray-400">
-                          {" "}
-                          · {new Date(version.source_processed_at).toLocaleString("es-AR")}
-                        </span>
-                      )}
-                      {version.source_processing_error && (
-                        <p className="mt-1 text-red-600">{version.source_processing_error}</p>
-                      )}
-                    </div>
-                  </div>
-                  <VersionSourceResultPanel version={version} />
-                  <div className="mt-4 rounded-lg border border-indigo-100 bg-indigo-50 p-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <p className="text-sm font-medium text-indigo-900">Training derivado</p>
-                        <p className="mt-1 text-xs text-indigo-700">
-                          {version.derived_training
-                            ? `${version.derived_training.title} · ${version.derived_training.status}`
-                            : "Aún no se generó un training para esta versión."}
-                        </p>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        {version.derived_training && (
-                          <Link
-                            to={`/trainings/${version.derived_training.id}`}
-                            className="rounded-lg border border-indigo-200 px-3 py-2 text-sm font-medium text-indigo-700 hover:bg-indigo-100"
-                          >
-                            Ver training
-                          </Link>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => generateTrainingMutation.mutate(version.id)}
-                          disabled={
-                            !version.source_storage_key ||
-                            version.source_processing_status !== "READY" ||
-                            generateTrainingMutation.isPending
-                          }
-                          className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-60"
-                        >
-                          {generateTrainingMutation.isPending ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <Sparkles className="h-4 w-4" />
-                          )}
-                          {version.derived_training ? "Regenerar" : "Generar training"}
-                        </button>
-                      </div>
-                    </div>
-                    {version.source_processing_status !== "READY" && version.source_storage_key && (
-                      <p className="mt-2 text-xs text-indigo-700">
-                        El training se habilita cuando el source processing queda en `READY`.
-                      </p>
-                    )}
-                  </div>
+                  {document.meta && <p className="text-xs text-gray-400">{document.meta}</p>}
                 </div>
               ))}
             </div>
-          </section>
-
-          <section className="rounded-2xl border border-gray-200 bg-white p-5">
-            <div className="mb-4 flex items-center gap-2">
-              <Link2 className="h-5 w-5 text-indigo-600" />
-              <h2 className="text-lg font-semibold text-gray-900">Vínculos operativos</h2>
-            </div>
-            <div className="grid gap-4 md:grid-cols-2">
-              <div>
-                <p className="mb-2 text-sm font-medium text-gray-700">Roles vinculados</p>
-                <div className="space-y-2">
-                  {!procedure.roles.length ? (
-                    <p className="rounded-lg bg-gray-50 px-3 py-2 text-sm text-gray-500">
-                      Este procedimiento todavía no tiene roles vinculados.
-                    </p>
-                  ) : (
-                    procedure.roles.map((item) => (
-                      <div
-                        key={item.id}
-                        className="flex items-center justify-between rounded-lg bg-gray-50 px-3 py-2 text-sm text-gray-700"
-                      >
-                        <div>
-                          <p className="font-medium text-gray-800">{item.role_name}</p>
-                          <p className="text-xs text-gray-500">
-                            {item.role_code} · {item.is_required ? "Requerido" : "Opcional"}
-                          </p>
-                        </div>
-                        <button
-                          type="button"
-                          disabled={unlinkRoleMutation.isPending}
-                          onClick={() => unlinkRoleMutation.mutate(item.id)}
-                          className="inline-flex items-center gap-1 rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-60"
-                        >
-                          <Unlink className="h-3 w-3" />
-                          Quitar
-                        </button>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-              <div>
-                <p className="mb-2 text-sm font-medium text-gray-700">Trainings derivados</p>
-                <div className="space-y-2">
-                  {procedure.versions
-                    .filter((version) => version.derived_training)
-                    .map((version) => (
-                      <div key={version.id} className="rounded-lg bg-gray-50 px-3 py-2 text-sm text-gray-700">
-                        {version.derived_training?.title} · v{version.version_number}
-                      </div>
-                    ))}
-                </div>
-              </div>
-            </div>
-          </section>
+          )}
+          {latestUpdate?.source_processing_error && (
+            <p className="mt-4 text-sm text-red-600">{latestUpdate.source_processing_error}</p>
+          )}
         </div>
+      </section>
 
-        <div className="space-y-6">
-          <form
-            onSubmit={(event) => {
-              event.preventDefault();
-              createVersionMutation.mutate();
-            }}
-            className="rounded-2xl border border-gray-200 bg-white p-5"
-          >
-            <h2 className="text-lg font-semibold text-gray-900">Nueva versión</h2>
-            <div className="mt-4 space-y-3">
-              <input
-                required
-                placeholder="Resumen del cambio"
-                value={versionForm.change_summary}
-                onChange={(event) =>
-                  setVersionForm((current) => ({ ...current, change_summary: event.target.value }))
-                }
-                className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm"
-              />
-              <textarea
-                rows={2}
-                placeholder="Razón del cambio"
-                value={versionForm.change_reason}
-                onChange={(event) =>
-                  setVersionForm((current) => ({ ...current, change_reason: event.target.value }))
-                }
-                className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm"
-              />
-              <textarea
-                required
-                rows={4}
-                placeholder="Contenido textual versionado"
-                value={versionForm.content_text}
-                onChange={(event) =>
-                  setVersionForm((current) => ({ ...current, content_text: event.target.value }))
-                }
-                className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm"
-              />
-              <input
-                type="date"
-                value={versionForm.effective_from}
-                onChange={(event) =>
-                  setVersionForm((current) => ({ ...current, effective_from: event.target.value }))
-                }
-                className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm"
-              />
-            </div>
-            <button
-              type="submit"
-              disabled={createVersionMutation.isPending}
-              className="mt-4 inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-60"
+      <section className="rounded-3xl border border-gray-200 bg-white p-6">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-xl font-semibold text-gray-900">Cuestionario</h2>
+            <p className="mt-1 text-sm text-gray-500">
+              Estado del cuestionario derivado de la actualización vigente.
+            </p>
+          </div>
+          {latestUpdate?.derived_training ? (
+            <Link
+              to={`/trainings/${latestUpdate.derived_training.id}`}
+              className="inline-flex items-center gap-2 rounded-lg border border-indigo-200 px-4 py-2 text-sm font-medium text-indigo-700 hover:bg-indigo-50"
             >
-              {createVersionMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
-              Crear versión
-            </button>
-          </form>
-
-          <div className="rounded-2xl border border-gray-200 bg-white p-5">
-            <h2 className="text-lg font-semibold text-gray-900">Vincular rol</h2>
-            <div className="mt-4">
-              <select
-                value={roleId}
-                onChange={(event) => setRoleId(event.target.value)}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm"
-              >
-                <option value="">Seleccionar rol</option>
-                {availableRoles.map((role) => (
-                  <option key={role.id} value={role.id}>
-                    {role.code} · {role.name}
-                  </option>
-                ))}
-              </select>
-            </div>
+              Ver cuestionario
+            </Link>
+          ) : (
             <button
               type="button"
-              onClick={() => linkRoleMutation.mutate()}
-              disabled={!roleId || linkRoleMutation.isPending}
-              className="mt-4 rounded-lg border border-indigo-200 px-4 py-2 text-sm font-medium text-indigo-700 hover:bg-indigo-50 disabled:opacity-60"
+              onClick={() => latestUpdate && generateTrainingMutation.mutate(latestUpdate.id)}
+              disabled={
+                !latestUpdate ||
+                !latestUpdate.source_storage_key ||
+                latestUpdate.source_processing_status !== "READY" ||
+                generateTrainingMutation.isPending
+              }
+              className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-60"
             >
-              Vincular rol
+              {generateTrainingMutation.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Sparkles className="h-4 w-4" />
+              )}
+              Crear cuestionario
             </button>
-          </div>
+          )}
         </div>
-      </div>
-    </div>
-  );
-}
 
-function VersionSourceResultPanel({ version }: { version: ProcedureVersion }) {
-  const isProcessing = ACTIVE_SOURCE_PROCESSING_STATUSES.includes(
-    version.source_processing_status as (typeof ACTIVE_SOURCE_PROCESSING_STATUSES)[number],
-  );
-
-  return (
-    <div className="mt-4 rounded-lg border border-emerald-100 bg-emerald-50/60 p-3">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <p className="text-sm font-medium text-emerald-900">Resultado del procesamiento</p>
-          <p className="mt-1 text-xs text-emerald-700">
-            Estructura extraída y transcripción del video fuente.
-          </p>
+        <div className="mt-6 rounded-2xl border border-gray-200 px-5 py-4">
+          {latestUpdate?.derived_training ? (
+            <div className="space-y-4">
+              <div className="grid gap-3 md:grid-cols-[110px_1fr_220px]">
+                <div className="text-sm font-medium text-gray-600">Act. {latestUpdate.version_number}</div>
+                <div>
+                  <p className="text-sm font-medium text-gray-900">{latestUpdate.derived_training.title}</p>
+                  <p className="mt-1 text-xs text-gray-500">{latestUpdate.derived_training.status}</p>
+                </div>
+                <div className="text-sm text-gray-500">
+                  {quizLoading ? "Cargando cuestionario..." : `${quiz.length} preguntas disponibles`}
+                </div>
+              </div>
+              {!quizLoading && quiz.length > 0 && (
+                <div className="space-y-2 border-t border-gray-100 pt-4">
+                  {quiz.slice(0, 3).map((question, index) => (
+                    <div key={question.id} className="flex gap-3 text-sm text-gray-700">
+                      <span className="font-medium text-gray-500">{question.question_json.position || index + 1}.</span>
+                      <span>{question.question_json.question}</span>
+                    </div>
+                  ))}
+                  {quiz.length > 3 && (
+                    <p className="text-xs text-gray-400">Hay {quiz.length - 3} preguntas adicionales en el training.</p>
+                  )}
+                </div>
+              )}
+              {!quizLoading && quiz.length === 0 && (
+                <p className="text-sm text-gray-500">Todavía no hay preguntas cargadas en el cuestionario derivado.</p>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-2 text-sm text-gray-500">
+              <p>Aún no existe un cuestionario derivado para la actualización vigente.</p>
+              {latestUpdate?.source_storage_key && latestUpdate.source_processing_status !== "READY" && (
+                <p>El cuestionario se habilita cuando el source processing queda en `READY`.</p>
+              )}
+            </div>
+          )}
         </div>
-        <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-medium text-emerald-800">
-          {getSourceProcessingLabel(version.source_processing_status)}
-        </span>
-      </div>
+      </section>
 
-      {!version.source_storage_key ? (
-        <p className="mt-3 text-xs text-amber-700">
-          Sube un video fuente para generar el resultado del procesamiento.
-        </p>
-      ) : version.source_processing_status === "FAILED" ? (
-        <div className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-          {version.source_processing_error || "No se pudo procesar esta versión."}
-        </div>
-      ) : isProcessing ? (
-        <p className="mt-3 text-xs text-emerald-800">
-          Estamos procesando el video de esta versión. El resultado aparecerá acá cuando termine.
-        </p>
-      ) : version.source_processing_status === "READY" && version.source_result ? (
-        <div className="mt-4 space-y-5">
+      <section className="rounded-3xl border border-gray-200 bg-white p-6">
+        <h2 className="text-xl font-semibold text-gray-900">Historial de actualizaciones</h2>
+        <div className="mt-6 rounded-2xl border border-gray-200 px-5 py-4">
           <div className="space-y-4">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
-                Estructura extraída
-              </p>
-              <h3 className="mt-1 text-sm font-semibold text-gray-900">
-                {version.source_result.structure.title}
-              </h3>
-            </div>
-
-            {version.source_result.structure.objectives.length > 0 && (
-              <div>
-                <h4 className="mb-2 text-sm font-semibold text-gray-700">Objetivos</h4>
-                <ul className="list-inside list-disc space-y-1 text-sm text-gray-600">
-                  {version.source_result.structure.objectives.map((objective, index) => (
-                    <li key={`${version.id}-objective-${index}`}>{objective}</li>
-                  ))}
-                </ul>
+            {updateHistory.map((update, index) => (
+              <div
+                key={update.id}
+                className={`grid gap-3 md:grid-cols-[110px_1fr_220px] ${
+                  index < updateHistory.length - 1 ? "border-b border-gray-100 pb-4" : ""
+                }`}
+              >
+                <div className="flex items-center gap-2 text-sm font-medium text-gray-700">
+                  Act. {update.version_number}
+                  {index === 0 && (
+                    <span className="rounded-full bg-green-50 px-2 py-0.5 text-[11px] text-green-700">Actual</span>
+                  )}
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-gray-900">
+                    {update.change_summary || "Actualización sin resumen"}
+                  </p>
+                  <p className="mt-1 text-sm text-gray-500">
+                    {update.change_reason ||
+                      update.content_text?.slice(0, 180) ||
+                      "Todavía no hay detalle adicional para esta actualización."}
+                  </p>
+                </div>
+                <div className="text-sm text-gray-500">
+                  <p>{update.effective_from ? formatDate(update.effective_from) : formatDate(update.created_at)}</p>
+                  <p className="mt-1 text-xs">{getSourceProcessingLabel(update.source_processing_status)}</p>
+                </div>
               </div>
-            )}
-
-            {version.source_result.structure.steps.length > 0 && (
-              <div>
-                <h4 className="mb-2 text-sm font-semibold text-gray-700">Pasos</h4>
-                <ol className="space-y-3">
-                  {version.source_result.structure.steps.map((step, index) => (
-                    <li
-                      key={`${version.id}-step-${index}`}
-                      className="rounded-lg border border-emerald-100 bg-white/80 p-3"
-                    >
-                      <p className="text-sm font-medium text-gray-800">
-                        {index + 1}. {step.title}
-                      </p>
-                      <p className="mt-1 text-sm text-gray-600">{step.description}</p>
-                      <SegmentEvidenceBadge segmentRange={step.evidence?.segment_range} />
-                    </li>
-                  ))}
-                </ol>
-              </div>
-            )}
-
-            {version.source_result.structure.critical_points.length > 0 && (
-              <div>
-                <h4 className="mb-2 text-sm font-semibold text-gray-700">Puntos críticos</h4>
-                <ul className="space-y-2">
-                  {version.source_result.structure.critical_points.map((point, index) => (
-                    <li
-                      key={`${version.id}-critical-point-${index}`}
-                      className="rounded-lg border border-amber-100 bg-amber-50 p-3"
-                    >
-                      <p className="text-sm font-medium text-amber-900">{point.text}</p>
-                      <p className="mt-1 text-sm text-amber-800">{point.why}</p>
-                      <SegmentEvidenceBadge segmentRange={point.evidence?.segment_range} />
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
+            ))}
           </div>
-
-          <details className="rounded-lg border border-gray-200 bg-white">
-            <summary className="cursor-pointer list-none px-3 py-2 text-sm font-medium text-gray-800">
-              Ver transcripción completa
-            </summary>
-            <div className="border-t border-gray-200 px-3 py-3">
-              <pre className="max-h-72 overflow-auto whitespace-pre-wrap text-xs leading-6 text-gray-600">
-                {version.source_result.transcript_raw}
-              </pre>
-            </div>
-          </details>
         </div>
-      ) : (
-        <p className="mt-3 text-xs text-gray-600">
-          El procesamiento terminó, pero esta versión todavía no tiene un resultado visible.
-        </p>
-      )}
-    </div>
-  );
-}
+      </section>
 
-function SegmentEvidenceBadge({ segmentRange }: { segmentRange?: string }) {
-  if (!segmentRange) return null;
-
-  return (
-    <div className="mt-2 inline-flex rounded-full bg-emerald-100 px-2.5 py-1 text-[11px] font-medium text-emerald-800">
-      Evidencia: {segmentRange}
+      <section className="rounded-3xl border border-gray-200 bg-white p-6">
+        <h2 className="text-lg font-semibold text-gray-900">Roles vinculados</h2>
+        <div className="mt-4 flex flex-wrap gap-2">
+          {procedure.owner_role_name ? (
+            <span className="rounded-full bg-gray-100 px-3 py-1.5 text-sm text-gray-700">
+              {procedure.owner_role_name}
+            </span>
+          ) : (
+            <p className="text-sm text-gray-500">Este procedimiento todavía no tiene un owner visible asignado.</p>
+          )}
+        </div>
+      </section>
     </div>
   );
 }

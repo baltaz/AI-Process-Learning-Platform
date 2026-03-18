@@ -12,6 +12,13 @@ class IncidentCreate(BaseModel):
     location: str | None = None
 
 
+class IncidentUpdate(BaseModel):
+    description: str | None = None
+    severity: str | None = None
+    role_id: uuid.UUID | None = None
+    location: str | None = None
+
+
 class IncidentOut(BaseModel):
     id: uuid.UUID
     description: str

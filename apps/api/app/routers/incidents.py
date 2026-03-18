@@ -27,6 +27,7 @@ from app.schemas.incident import (
     IncidentLinkRequest,
     IncidentOut,
     IncidentRelatedMatchOut,
+    IncidentUpdate,
 )
 from app.schemas.task import TrainingSuggestion
 from app.services.embedding_service import get_embedding
@@ -185,6 +186,46 @@ async def create_incident(
 async def list_incidents(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Incident).order_by(Incident.created_at.desc()).options(selectinload(Incident.role)))
     return [_incident_out(item) for item in result.scalars().all()]
+
+
+@router.get("/{incident_id}", response_model=IncidentOut)
+async def get_incident(incident_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    incident = (
+        await db.execute(select(Incident).where(Incident.id == incident_id).options(selectinload(Incident.role)))
+    ).scalar_one_or_none()
+    if incident is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Incident not found")
+    return _incident_out(incident)
+
+
+@router.patch("/{incident_id}", response_model=IncidentOut)
+async def update_incident(
+    incident_id: uuid.UUID,
+    payload: IncidentUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    incident = (await db.execute(select(Incident).where(Incident.id == incident_id))).scalar_one_or_none()
+    if incident is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Incident not found")
+
+    changes = payload.model_dump(exclude_unset=True)
+    if "role_id" in changes and changes["role_id"] is not None:
+        role = (await db.execute(select(Role).where(Role.id == changes["role_id"]))).scalar_one_or_none()
+        if role is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role not found")
+
+    for field, value in changes.items():
+        setattr(incident, field, value)
+
+    if "description" in changes and changes["description"]:
+        incident.embedding = await get_embedding(changes["description"])
+
+    await db.commit()
+    incident = (
+        await db.execute(select(Incident).where(Incident.id == incident_id).options(selectinload(Incident.role)))
+    ).scalar_one()
+    return _incident_out(incident)
 
 
 @router.get("/{incident_id}/suggest-trainings", response_model=list[TrainingSuggestion])

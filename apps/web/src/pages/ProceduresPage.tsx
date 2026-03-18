@@ -1,13 +1,7 @@
-import { useState } from "react";
 import { Link } from "react-router-dom";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { BookCopy, FilePlus2, Loader2, Network, Plus } from "lucide-react";
 import api from "@/services/api";
-
-interface RoleOption {
-  id: string;
-  name: string;
-}
 
 interface ProcedureVersion {
   id: string;
@@ -26,36 +20,9 @@ interface Procedure {
 }
 
 export default function ProceduresPage() {
-  const queryClient = useQueryClient();
-  const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({
-    code: "",
-    title: "",
-    description: "",
-    owner_role_id: "",
-  });
-
   const { data: procedures, isLoading } = useQuery<Procedure[]>({
     queryKey: ["procedures"],
     queryFn: () => api.get("/procedures").then((r) => r.data),
-  });
-
-  const { data: roles } = useQuery<RoleOption[]>({
-    queryKey: ["roles"],
-    queryFn: () => api.get("/roles").then((r) => r.data),
-  });
-
-  const createMutation = useMutation({
-    mutationFn: () =>
-      api.post("/procedures", {
-        ...form,
-        owner_role_id: form.owner_role_id || null,
-      }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["procedures"] });
-      setShowForm(false);
-      setForm({ code: "", title: "", description: "", owner_role_id: "" });
-    },
   });
 
   return (
@@ -67,87 +34,14 @@ export default function ProceduresPage() {
             Biblioteca versionada que actúa como fuente de verdad operativa.
           </p>
         </div>
-        <button
-          onClick={() => setShowForm((value) => !value)}
+        <Link
+          to="/procedures/new"
           className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-indigo-700"
         >
           <Plus className="h-4 w-4" />
           Nuevo procedimiento
-        </button>
+        </Link>
       </div>
-
-      {showForm && (
-        <form
-          onSubmit={(event) => {
-            event.preventDefault();
-            createMutation.mutate();
-          }}
-          className="mb-6 grid gap-4 rounded-2xl border border-gray-200 bg-white p-6 md:grid-cols-2"
-        >
-          <label className="block">
-            <span className="mb-1 block text-sm font-medium text-gray-700">Código</span>
-            <input
-              required
-              value={form.code}
-              onChange={(event) => setForm((current) => ({ ...current, code: event.target.value }))}
-              className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm"
-              placeholder="PROC-EXAMPLE"
-            />
-          </label>
-          <label className="block">
-            <span className="mb-1 block text-sm font-medium text-gray-700">Título</span>
-            <input
-              required
-              value={form.title}
-              onChange={(event) => setForm((current) => ({ ...current, title: event.target.value }))}
-              className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm"
-            />
-          </label>
-          <label className="block md:col-span-2">
-            <span className="mb-1 block text-sm font-medium text-gray-700">Descripción</span>
-            <textarea
-              rows={3}
-              value={form.description}
-              onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))}
-              className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm"
-            />
-          </label>
-          <label className="block">
-            <span className="mb-1 block text-sm font-medium text-gray-700">Rol owner</span>
-            <select
-              value={form.owner_role_id}
-              onChange={(event) =>
-                setForm((current) => ({ ...current, owner_role_id: event.target.value }))
-              }
-              className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm"
-            >
-              <option value="">Sin asignar</option>
-              {roles?.map((role) => (
-                <option key={role.id} value={role.id}>
-                  {role.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <div className="flex items-end justify-end gap-3">
-            <button
-              type="button"
-              onClick={() => setShowForm(false)}
-              className="rounded-lg border border-gray-300 px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
-            >
-              Cancelar
-            </button>
-            <button
-              type="submit"
-              disabled={createMutation.isPending}
-              className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-60"
-            >
-              {createMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
-              Guardar
-            </button>
-          </div>
-        </form>
-      )}
 
       {isLoading ? (
         <div className="flex items-center justify-center py-20">

@@ -5,12 +5,9 @@ import {
   BookOpen,
   BriefcaseBusiness,
   CircleUserRound,
-  ClipboardList,
   GitBranch,
   House,
-  Radar,
   Search,
-  ShieldCheck,
   Users,
 } from "lucide-react";
 
@@ -53,14 +50,12 @@ const navItems: NavItem[] = [
   { to: "/procedures", label: "Procedimientos", icon: GitBranch, roles: ["admin", "operator"] },
   { to: "/roles", label: "Roles", icon: BriefcaseBusiness, roles: ["admin"] },
   { to: "/users", label: "Usuarios", icon: Users, roles: ["admin"] },
-  { to: "/compliance", label: "Compliance", icon: ShieldCheck, roles: ["admin"] },
-  { to: "/trainings", label: "Trainings", icon: BookOpen, roles: ["admin", "operator"] },
-  { to: "/change-events", label: "Change Events", icon: Radar, roles: ["admin"] },
   { to: "/incidents", label: "Incidentes", icon: AlertTriangle, roles: ["admin", "operator"] },
-  { to: "/assignments", label: "Asignaciones", icon: ClipboardList, roles: ["admin"] },
+  { to: "/trainings", label: "Trainings", icon: BookOpen, roles: ["operator"] },
 ];
 
 const secondaryActionsByRole: Partial<Record<DemoRole, SecondaryAction[]>> = {
+  admin: [{ to: "/profile", label: "Perfil", icon: CircleUserRound }],
   operator: [
     { to: "/search", label: "Búsqueda", icon: Search },
     { to: "/profile", label: "Perfil", icon: CircleUserRound },

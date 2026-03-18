@@ -11,7 +11,10 @@ import {
   BriefcaseBusiness,
   ShieldAlert,
   Radar,
+  ArrowRight,
+  Plus,
 } from "lucide-react";
+import { Link } from "react-router-dom";
 
 interface DashboardData {
   total_trainings: number;
@@ -97,12 +100,39 @@ export default function DashboardPage() {
     },
   ];
 
+  const sections = [
+    {
+      title: "Usuarios",
+      description: "Gestioná perfiles, ubicaciones y roles asignados.",
+      to: "/users",
+      createTo: "/users/new",
+    },
+    {
+      title: "Roles",
+      description: "Definí responsabilidades y vinculá procedimientos.",
+      to: "/roles",
+      createTo: "/roles",
+    },
+    {
+      title: "Procedimientos",
+      description: "Mantené la biblioteca operativa y sus versiones.",
+      to: "/procedures",
+      createTo: "/procedures/new",
+    },
+    {
+      title: "Incidencias",
+      description: "Consultá eventos registrados y abrí nuevos casos.",
+      to: "/incidents",
+      createTo: "/incidents/new",
+    },
+  ];
+
   return (
-    <div className="mx-auto max-w-4xl">
+    <div className="mx-auto max-w-6xl">
       <div className="mb-8">
         <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
         <p className="mt-1 text-sm text-gray-500">
-          Resumen general de las capacitaciones y asignaciones
+          Vista ejecutiva del entorno admin con accesos rápidos a las entidades principales.
         </p>
       </div>
 
@@ -159,6 +189,31 @@ export default function DashboardPage() {
             </span>
           )}
         </p>
+      </div>
+
+      <div className="mt-10 grid gap-4 lg:grid-cols-2">
+        {sections.map((section) => (
+          <div key={section.title} className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+            <h3 className="text-lg font-semibold text-gray-900">{section.title}</h3>
+            <p className="mt-2 text-sm text-gray-500">{section.description}</p>
+            <div className="mt-4 flex flex-wrap gap-3">
+              <Link
+                to={section.to}
+                className="inline-flex items-center gap-2 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                <ArrowRight className="h-4 w-4" />
+                Ver listado
+              </Link>
+              <Link
+                to={section.createTo}
+                className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+              >
+                <Plus className="h-4 w-4" />
+                Crear
+              </Link>
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );

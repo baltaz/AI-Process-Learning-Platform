@@ -1,8 +1,8 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import api from "@/services/api";
 import { Search, Loader2, Clock, FileText, AlertTriangle, BookOpen } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 
 import { getDemoRole, getStoredUser } from "@/lib/auth";
 import type { AssignmentItem, IncidentItem } from "@/lib/operatorData";
@@ -24,8 +24,16 @@ interface SearchResult {
 export default function SearchPage() {
   const role = getDemoRole();
   const user = getStoredUser();
+  const [searchParams] = useSearchParams();
+  const urlQuery = searchParams.get("q") ?? "";
   const [query, setQuery] = useState("");
   const [submitted, setSubmitted] = useState("");
+
+  useEffect(() => {
+    if (!urlQuery || urlQuery === submitted) return;
+    setQuery(urlQuery);
+    setSubmitted(urlQuery);
+  }, [submitted, urlQuery]);
 
   const { data: results, isLoading: proceduresLoading } = useQuery<SearchResult[]>({
     queryKey: ["search", submitted],
