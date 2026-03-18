@@ -10,7 +10,7 @@ import argparse
 import asyncio
 from datetime import date, datetime, timedelta, timezone
 
-from sqlalchemy import delete, false, or_, select
+from sqlalchemy import delete, false, or_, select, text
 
 from app.core.database import Base, async_session
 from app.core.security import hash_password
@@ -370,8 +370,16 @@ DEMO_TASK_MARKERS = [
 ]
 
 
+async def get_existing_table_names(db) -> set[str]:
+    result = await db.execute(
+        text("select tablename from pg_tables where schemaname = current_schema()")
+    )
+    return set(result.scalars().all())
+
+
 async def wipe_demo_data(db) -> None:
     log_progress("wipe demo: resolviendo entidades demo")
+    existing_tables = await get_existing_table_names(db)
 
     demo_user_ids = list(
         (await db.execute(select(User.id).where(User.email.in_(DEMO_USER_EMAILS)))).scalars().all()
@@ -493,14 +501,21 @@ async def wipe_demo_data(db) -> None:
         await db.execute(delete(Incident).where(Incident.id.in_(demo_incident_ids)))
 
     if demo_training_ids:
-        await db.execute(delete(AIUsageEvent).where(AIUsageEvent.training_id.in_(demo_training_ids)))
-        await db.execute(delete(Job).where(Job.training_id.in_(demo_training_ids)))
-        await db.execute(delete(QuizQuestion).where(QuizQuestion.training_id.in_(demo_training_ids)))
-        await db.execute(delete(TaskTrainingLink).where(TaskTrainingLink.training_id.in_(demo_training_ids)))
+        if AIUsageEvent.__tablename__ in existing_tables:
+            await db.execute(delete(AIUsageEvent).where(AIUsageEvent.training_id.in_(demo_training_ids)))
+        if Job.__tablename__ in existing_tables:
+            await db.execute(delete(Job).where(Job.training_id.in_(demo_training_ids)))
+        if QuizQuestion.__tablename__ in existing_tables:
+            await db.execute(delete(QuizQuestion).where(QuizQuestion.training_id.in_(demo_training_ids)))
+        if TaskTrainingLink.__tablename__ in existing_tables:
+            await db.execute(delete(TaskTrainingLink).where(TaskTrainingLink.training_id.in_(demo_training_ids)))
         await db.execute(delete(Assignment).where(Assignment.training_id.in_(demo_training_ids)))
-        await db.execute(delete(TrainingTranscript).where(TrainingTranscript.training_id.in_(demo_training_ids)))
-        await db.execute(delete(TrainingChunk).where(TrainingChunk.training_id.in_(demo_training_ids)))
-        await db.execute(delete(TrainingStructure).where(TrainingStructure.training_id.in_(demo_training_ids)))
+        if TrainingTranscript.__tablename__ in existing_tables:
+            await db.execute(delete(TrainingTranscript).where(TrainingTranscript.training_id.in_(demo_training_ids)))
+        if TrainingChunk.__tablename__ in existing_tables:
+            await db.execute(delete(TrainingChunk).where(TrainingChunk.training_id.in_(demo_training_ids)))
+        if TrainingStructure.__tablename__ in existing_tables:
+            await db.execute(delete(TrainingStructure).where(TrainingStructure.training_id.in_(demo_training_ids)))
         await db.execute(delete(Training).where(Training.id.in_(demo_training_ids)))
 
     if demo_version_ids or demo_procedure_ids or demo_change_event_ids:
@@ -587,8 +602,10 @@ async def wipe_demo_data(db) -> None:
 
 async def wipe_all_data(db) -> None:
     log_progress("wipe full: eliminando toda la base")
+    existing_tables = await get_existing_table_names(db)
     for table in reversed(Base.metadata.sorted_tables):
-        await db.execute(table.delete())
+        if table.name in existing_tables:
+            await db.execute(table.delete())
     await db.flush()
     log_progress("wipe full: completo")
 
