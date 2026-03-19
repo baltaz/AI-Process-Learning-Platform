@@ -7,17 +7,26 @@ import { getStoredUser } from "@/lib/auth";
 import type { ComplianceItem } from "@/lib/operatorData";
 import api from "@/services/api";
 
+interface ProcedureStructure {
+  objectives?: string[];
+  steps?: Array<{
+    title: string;
+    description: string;
+    evidence?: { segment_range?: string };
+    origin?: string;
+    edited?: boolean;
+  }>;
+  critical_points?: Array<{ text: string; why: string; evidence?: { segment_range?: string } }>;
+}
+
 interface ProcedureVersion {
   id: string;
   version_number: number;
   status: string;
   content_text?: string | null;
+  content_json?: ProcedureStructure | null;
   source_result?: {
-    structure?: {
-      objectives?: string[];
-      steps?: Array<{ title: string; description: string; evidence?: { segment_range?: string } }>;
-      critical_points?: Array<{ text: string; why: string; evidence?: { segment_range?: string } }>;
-    };
+    structure?: ProcedureStructure;
   } | null;
   derived_training?: {
     id: string;
@@ -60,6 +69,7 @@ export default function OperatorProcedureDetailPage() {
     const versions = procedure?.versions ?? [];
     return [...versions].sort((a, b) => b.version_number - a.version_number)[0] ?? null;
   }, [procedure]);
+  const displayStructure = latestVersion?.content_json ?? latestVersion?.source_result?.structure ?? null;
 
   if (complianceLoading || procedureLoading) {
     return (
@@ -130,12 +140,12 @@ export default function OperatorProcedureDetailPage() {
         </div>
       </div>
 
-      {latestVersion?.source_result?.structure ? (
+      {displayStructure ? (
         <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
           <section className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
             <h2 className="text-lg font-semibold text-gray-900">Pasos operativos</h2>
             <div className="mt-4 space-y-4">
-              {latestVersion.source_result.structure.steps?.map((step, index) => (
+              {displayStructure.steps?.map((step, index) => (
                 <div key={`${step.title}-${index}`} className="rounded-xl border border-gray-100 bg-gray-50 p-4">
                   <p className="text-xs font-semibold uppercase tracking-wide text-indigo-600">
                     Paso {index + 1}
@@ -154,7 +164,7 @@ export default function OperatorProcedureDetailPage() {
             <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
               <h2 className="text-lg font-semibold text-gray-900">Objetivos</h2>
               <ul className="mt-4 space-y-2 text-sm text-gray-600">
-                {latestVersion.source_result.structure.objectives?.map((objective, index) => (
+                {displayStructure.objectives?.map((objective, index) => (
                   <li key={`${objective}-${index}`} className="flex gap-2">
                     <span className="mt-1 h-1.5 w-1.5 rounded-full bg-indigo-500" />
                     <span>{objective}</span>
@@ -169,7 +179,7 @@ export default function OperatorProcedureDetailPage() {
                 <h2 className="text-lg font-semibold text-gray-900">Puntos críticos</h2>
               </div>
               <div className="mt-4 space-y-3">
-                {latestVersion.source_result.structure.critical_points?.map((point, index) => (
+                {displayStructure.critical_points?.map((point, index) => (
                   <div key={`${point.text}-${index}`} className="rounded-xl bg-gray-50 p-4">
                     <p className="text-sm font-medium text-gray-900">{point.text}</p>
                     <p className="mt-1 text-sm text-gray-600">{point.why}</p>

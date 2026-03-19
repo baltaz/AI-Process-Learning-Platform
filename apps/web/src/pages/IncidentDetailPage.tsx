@@ -1,6 +1,19 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ArrowLeft, Loader2 } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowLeft,
+  Check,
+  ChevronsUpDown,
+  Clock,
+  Link as LinkIcon,
+  Loader2,
+  Pencil,
+  Search,
+  Shield,
+  Sparkles,
+  X,
+} from "lucide-react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
 import api from "@/services/api";
@@ -15,10 +28,94 @@ interface IncidentRecord {
   id: string;
   description: string;
   severity: string;
+  status: "open" | "closed";
   role_id?: string | null;
   role_name?: string | null;
+  role_code?: string | null;
   location?: string | null;
   created_at: string;
+  closed_at?: string | null;
+  closed_by?: string | null;
+}
+
+interface SuggestedTraining {
+  procedure_id?: string | null;
+  procedure_version_id?: string | null;
+  training_id?: string | null;
+  title: string;
+  score: number;
+  snippet?: string | null;
+}
+
+type FindingType =
+  | "not_followed"
+  | "needs_redefinition"
+  | "missing_procedure"
+  | "contributing_factor";
+
+interface AnalysisFinding {
+  id: string;
+  analysis_run_id: string;
+  procedure_id?: string | null;
+  procedure_version_id?: string | null;
+  procedure_title?: string | null;
+  version_number?: number | null;
+  training_id?: string | null;
+  training_title?: string | null;
+  finding_type: FindingType;
+  confidence?: number | null;
+  reasoning_summary?: string | null;
+  recommended_action?: string | null;
+  status: string;
+  created_at: string;
+}
+
+interface AnalysisRun {
+  id: string;
+  incident_id: string;
+  source: string;
+  analysis_summary?: string | null;
+  resolution_summary?: string | null;
+  created_at: string;
+  findings: AnalysisFinding[];
+  related_matches: Array<{
+    id: string;
+    related_incident_id: string;
+    related_incident_description: string;
+    related_analysis_run_id?: string | null;
+    related_analysis_summary?: string | null;
+    related_resolution_summary?: string | null;
+    related_findings: AnalysisFinding[];
+    similarity_score?: number | null;
+    rationale?: string | null;
+  }>;
+}
+
+interface AnalysisFindingDraft {
+  procedure_version_id: string;
+  finding_type: FindingType;
+  reasoning_summary: string;
+  recommended_action: string;
+}
+
+interface AnalysisDraft {
+  run_id?: string | null;
+  analysis_summary: string;
+  resolution_summary: string;
+  findings: AnalysisFindingDraft[];
+}
+
+interface ProcedureOption {
+  value: string;
+  label: string;
+}
+
+interface ProcedureListItem {
+  id: string;
+  title: string;
+  latest_version?: {
+    id: string;
+  } | null;
 }
 
 const emptyForm = {
@@ -28,7 +125,62 @@ const emptyForm = {
   location: "",
 };
 
+const severityMeta: Record<string, string> = {
+  low: "bg-emerald-50 text-emerald-700",
+  medium: "bg-amber-50 text-amber-700",
+  high: "bg-orange-50 text-orange-700",
+  critical: "bg-red-50 text-red-700",
+};
+
+const severityLabel: Record<string, string> = {
+  low: "Baja",
+  medium: "Media",
+  high: "Alta",
+  critical: "Crítica",
+};
+
+const statusMeta: Record<IncidentRecord["status"], string> = {
+  open: "bg-indigo-50 text-indigo-700",
+  closed: "bg-slate-100 text-slate-700",
+};
+
+const statusLabel: Record<IncidentRecord["status"], string> = {
+  open: "Abierta",
+  closed: "Cerrada",
+};
+
+const findingTypeLabels: Record<FindingType, string> = {
+  not_followed: "No respetado",
+  needs_redefinition: "Debe redefinirse",
+  missing_procedure: "Falta procedimiento",
+  contributing_factor: "Factor contribuyente",
+};
+
+const findingTypeClasses: Record<FindingType, string> = {
+  not_followed: "bg-red-50 text-red-700 border-red-200",
+  needs_redefinition: "bg-amber-50 text-amber-700 border-amber-200",
+  missing_procedure: "bg-purple-50 text-purple-700 border-purple-200",
+  contributing_factor: "bg-slate-50 text-slate-700 border-slate-200",
+};
+
+const emptyFindingDraft = (): AnalysisFindingDraft => ({
+  procedure_version_id: "",
+  finding_type: "not_followed",
+  reasoning_summary: "",
+  recommended_action: "",
+});
+
+const emptyAnalysisDraft = (): AnalysisDraft => ({
+  run_id: null,
+  analysis_summary: "",
+  resolution_summary: "",
+  findings: [emptyFindingDraft()],
+});
+
 function getErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message;
+  }
   if (
     typeof error === "object" &&
     error !== null &&
@@ -40,13 +192,151 @@ function getErrorMessage(error: unknown, fallback: string) {
   return fallback;
 }
 
+function isFindingDraftFilled(finding: AnalysisFindingDraft) {
+  return !!(
+    finding.procedure_version_id ||
+    finding.reasoning_summary.trim() ||
+    finding.recommended_action.trim()
+  );
+}
+
+function buildDraftFromRun(run: AnalysisRun): AnalysisDraft {
+  return {
+    run_id: run.id,
+    analysis_summary: run.analysis_summary || "",
+    resolution_summary: run.resolution_summary || "",
+    findings: run.findings.length
+      ? run.findings.map((finding) => ({
+          procedure_version_id: finding.procedure_version_id || "",
+          finding_type: finding.finding_type,
+          reasoning_summary: finding.reasoning_summary || "",
+          recommended_action: finding.recommended_action || "",
+        }))
+      : [emptyFindingDraft()],
+  };
+}
+
+function ProcedureVersionCombobox({
+  value,
+  options,
+  disabled,
+  onChange,
+}: {
+  value: string;
+  options: ProcedureOption[];
+  disabled?: boolean;
+  onChange: (value: string) => void;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [query, setQuery] = useState("");
+
+  const selectedOption = useMemo(
+    () => options.find((option) => option.value === value) ?? null,
+    [options, value],
+  );
+  const filteredOptions = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+    if (!normalizedQuery) return options;
+    return options.filter((option) => option.label.toLowerCase().includes(normalizedQuery));
+  }, [options, query]);
+
+  function handleSelect(nextValue: string) {
+    onChange(nextValue);
+    setQuery("");
+    setIsOpen(false);
+  }
+
+  return (
+    <div
+      className="relative"
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+          setIsOpen(false);
+          setQuery("");
+        }
+      }}
+    >
+      <div className="relative">
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+        <input
+          value={isOpen ? query : selectedOption?.label || ""}
+          onFocus={() => {
+            if (disabled) return;
+            setIsOpen(true);
+            setQuery(selectedOption?.label || "");
+          }}
+          onChange={(event) => {
+            setIsOpen(true);
+            setQuery(event.target.value);
+          }}
+          disabled={disabled}
+          className="w-full rounded-lg border border-gray-300 py-2 pl-9 pr-10 text-sm disabled:bg-gray-100"
+          placeholder="Buscar procedimiento..."
+          role="combobox"
+          aria-expanded={isOpen}
+          aria-autocomplete="list"
+        />
+        <button
+          type="button"
+          tabIndex={-1}
+          disabled={disabled}
+          onClick={() => {
+            if (disabled) return;
+            setIsOpen((current) => {
+              const next = !current;
+              if (next) {
+                setQuery(selectedOption?.label || "");
+              }
+              return next;
+            });
+          }}
+          className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-gray-400 hover:bg-gray-100 disabled:cursor-not-allowed"
+        >
+          <ChevronsUpDown className="h-4 w-4" />
+        </button>
+      </div>
+
+      {isOpen && (
+        <div className="absolute z-10 mt-2 max-h-64 w-full overflow-auto rounded-lg border border-gray-200 bg-white p-1 shadow-lg">
+          <button
+            type="button"
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => handleSelect("")}
+            className="flex w-full items-center justify-between rounded-md px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+          >
+            <span>Sin procedimiento versionado</span>
+            {!value && <Check className="h-4 w-4 text-indigo-600" />}
+          </button>
+          {filteredOptions.length ? (
+            filteredOptions.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => handleSelect(option.value)}
+                className="flex w-full items-center justify-between rounded-md px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+              >
+                <span>{option.label}</span>
+                {option.value === value && <Check className="h-4 w-4 text-indigo-600" />}
+              </button>
+            ))
+          ) : (
+            <div className="px-3 py-2 text-sm text-gray-400">No se encontraron procedimientos.</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function IncidentDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const isCreating = id === "new";
+  const isCreating = !id || id === "new";
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [form, setForm] = useState(emptyForm);
   const [error, setError] = useState("");
+  const [analysisDraft, setAnalysisDraft] = useState<AnalysisDraft>(emptyAnalysisDraft());
 
   const { data: incident, isLoading } = useQuery<IncidentRecord>({
     queryKey: ["incident", id],
@@ -58,9 +348,34 @@ export default function IncidentDetailPage() {
     queryKey: ["roles"],
     queryFn: () => api.get("/roles").then((r) => r.data),
   });
+  const { data: procedures = [] } = useQuery<ProcedureListItem[]>({
+    queryKey: ["procedures"],
+    queryFn: () => api.get("/procedures").then((r) => r.data),
+  });
+  const {
+    data: suggestions = [],
+    isLoading: suggestionsLoading,
+    refetch: refetchSuggestions,
+  } = useQuery<SuggestedTraining[]>({
+    queryKey: ["incident-suggestions", id],
+    queryFn: () => api.get(`/incidents/${id}/suggest-trainings`).then((r) => r.data),
+    enabled: Boolean(id) && !isCreating,
+  });
+  const {
+    data: analysisRuns = [],
+    isLoading: analysisLoading,
+    refetch: refetchAnalysisRuns,
+  } = useQuery<AnalysisRun[]>({
+    queryKey: ["incident-analysis-runs", id],
+    queryFn: () => api.get(`/incidents/${id}/analysis-runs`).then((r) => r.data),
+    enabled: Boolean(id) && !isCreating,
+  });
 
   useEffect(() => {
-    if (!incident) return;
+    if (!incident) {
+      setAnalysisDraft(emptyAnalysisDraft());
+      return;
+    }
     setForm({
       description: incident.description,
       severity: incident.severity,
@@ -89,14 +404,15 @@ export default function IncidentDetailPage() {
   });
 
   const updateMutation = useMutation({
-    mutationFn: () =>
+    mutationFn: (payload: {
+      description?: string;
+      severity?: string;
+      role_id?: string | null;
+      location?: string | null;
+      status?: IncidentRecord["status"];
+    }) =>
       api
-        .patch(`/incidents/${id}`, {
-          description: form.description,
-          severity: form.severity,
-          role_id: form.role_id || null,
-          location: form.location.trim() || null,
-        })
+        .patch(`/incidents/${id}`, payload)
         .then((r) => r.data as IncidentRecord),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["incidents"] });
@@ -105,6 +421,66 @@ export default function IncidentDetailPage() {
     },
     onError: (mutationError) => {
       setError(getErrorMessage(mutationError, "No se pudo actualizar la incidencia."));
+    },
+  });
+  const analyzeMutation = useMutation({
+    mutationFn: () => api.post(`/incidents/${id}/analyze-procedures`).then((r) => r.data as AnalysisRun),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["incident-analysis-runs", id] }),
+        queryClient.invalidateQueries({ queryKey: ["incident-suggestions", id] }),
+      ]);
+      await Promise.all([refetchAnalysisRuns(), refetchSuggestions()]);
+      setError("");
+    },
+    onError: (mutationError) => {
+      setError(getErrorMessage(mutationError, "No se pudo analizar la incidencia."));
+    },
+  });
+  const saveAnalysisMutation = useMutation({
+    mutationFn: (draft: AnalysisDraft) =>
+      (
+        draft.run_id
+          ? api.patch(`/incidents/${id}/analysis-runs/${draft.run_id}`, {
+              analysis_summary: draft.analysis_summary || null,
+              resolution_summary: draft.resolution_summary || null,
+              findings: draft.findings.filter(isFindingDraftFilled).map((finding) => ({
+                procedure_version_id: finding.procedure_version_id || null,
+                finding_type: finding.finding_type,
+                reasoning_summary: finding.reasoning_summary || null,
+                recommended_action: finding.recommended_action || null,
+                status: "confirmed",
+              })),
+            })
+          : api.post(`/incidents/${id}/analysis-runs`, {
+              analysis_summary: draft.analysis_summary || null,
+              resolution_summary: draft.resolution_summary || null,
+              findings: draft.findings.filter(isFindingDraftFilled).map((finding) => ({
+                procedure_version_id: finding.procedure_version_id || null,
+                finding_type: finding.finding_type,
+                reasoning_summary: finding.reasoning_summary || null,
+                recommended_action: finding.recommended_action || null,
+                status: "confirmed",
+              })),
+            })
+      ).then((r) => r.data as AnalysisRun),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["incident-analysis-runs", id] });
+      await refetchAnalysisRuns();
+      setAnalysisDraft(emptyAnalysisDraft());
+      setError("");
+    },
+    onError: (mutationError) => {
+      setError(getErrorMessage(mutationError, "No se pudo guardar el análisis manual."));
+    },
+  });
+  const linkMutation = useMutation({
+    mutationFn: (trainingId: string) => api.post(`/incidents/${id}/link-training`, { training_id: trainingId }),
+    onSuccess: () => {
+      setError("");
+    },
+    onError: (mutationError) => {
+      setError(getErrorMessage(mutationError, "No se pudo vincular el training."));
     },
   });
 
@@ -117,8 +493,48 @@ export default function IncidentDetailPage() {
       return;
     }
 
-    updateMutation.mutate();
+    updateMutation.mutate({
+      description: form.description,
+      severity: form.severity,
+      role_id: form.role_id || null,
+      location: form.location.trim() || null,
+    });
   }
+
+  function handleStatusChange(nextStatus: IncidentRecord["status"]) {
+    if (!incident || incident.status === nextStatus) return;
+    setError("");
+    updateMutation.mutate({ status: nextStatus });
+  }
+  const procedureOptions = useMemo<ProcedureOption[]>(
+    () =>
+      [
+        ...procedures
+          .filter((procedure) => procedure.latest_version?.id)
+          .map((procedure) => ({
+            value: procedure.latest_version!.id,
+            label: procedure.title,
+          })),
+        ...analysisRuns.flatMap((run) =>
+          run.findings
+            .filter((finding) => finding.procedure_version_id)
+            .map((finding) => ({
+              value: finding.procedure_version_id as string,
+              label: finding.procedure_title || "Procedimiento",
+            })),
+        ),
+      ].filter((option, index, options) => options.findIndex((candidate) => candidate.value === option.value) === index),
+    [analysisRuns, procedures],
+  );
+  const isPending =
+    createMutation.isPending ||
+    updateMutation.isPending ||
+    analyzeMutation.isPending ||
+    saveAnalysisMutation.isPending ||
+    linkMutation.isPending;
+  const isClosed = incident?.status === "closed";
+  const needsRedefinitionCount = analysisRuns.flatMap((run) => run.findings).filter((finding) => finding.finding_type === "needs_redefinition").length;
+  const suggestedCount = analysisRuns.flatMap((run) => run.findings).filter((finding) => finding.status === "suggested").length;
 
   if (!isCreating && (isLoading || !incident)) {
     return (
@@ -127,8 +543,6 @@ export default function IncidentDetailPage() {
       </div>
     );
   }
-
-  const isPending = createMutation.isPending || updateMutation.isPending;
 
   return (
     <div className="mx-auto max-w-4xl space-y-6">
@@ -142,23 +556,54 @@ export default function IncidentDetailPage() {
         </Link>
 
         <div className="rounded-3xl border border-gray-200 bg-white p-6">
-          <div className="flex items-start gap-4">
-            <AlertTriangle className="mt-1 h-6 w-6 text-indigo-500" />
-            <div>
-              <h1 className="text-2xl font-bold text-gray-900">
-                {isCreating ? "Nueva incidencia" : "Detalle de incidencia"}
-              </h1>
-              <p className="mt-2 text-sm text-gray-600">
-                {isCreating
-                  ? "Registrá un incidente nuevo con los datos base necesarios."
-                  : "Editá la información operativa principal. El análisis profundo queda para la próxima iteración."}
-              </p>
-              {!isCreating && incident && (
-                <p className="mt-2 text-xs text-gray-400">
-                  Creada el {new Date(incident.created_at).toLocaleString("es-AR")}
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="flex items-start gap-4">
+              <AlertTriangle className="mt-1 h-6 w-6 text-indigo-500" />
+              <div>
+                <h1 className="text-2xl font-bold text-gray-900">
+                  {isCreating ? "Nueva incidencia" : "Detalle de incidencia"}
+                </h1>
+                <p className="mt-2 text-sm text-gray-600">
+                  {isCreating
+                    ? "Registrá un incidente nuevo con los datos base necesarios."
+                    : "Usa esta incidencia como disparador del análisis semántico y de los hallazgos sobre procedimientos."}
                 </p>
-              )}
+                {!isCreating && incident && (
+                  <div className="mt-3 flex flex-wrap gap-2 text-xs">
+                    <span className={`rounded-full px-2.5 py-1 font-medium ${severityMeta[incident.severity]}`}>
+                      {severityLabel[incident.severity] ?? incident.severity}
+                    </span>
+                    <span className={`rounded-full px-2.5 py-1 font-medium ${statusMeta[incident.status]}`}>
+                      {statusLabel[incident.status]}
+                    </span>
+                    {incident.role_name && (
+                      <span className="rounded-full bg-slate-100 px-2.5 py-1 text-slate-700">{incident.role_name}</span>
+                    )}
+                    {incident.location && (
+                      <span className="rounded-full bg-gray-100 px-2.5 py-1 text-gray-600">{incident.location}</span>
+                    )}
+                  </div>
+                )}
+                {!isCreating && incident && (
+                  <p className="mt-3 text-xs text-gray-400">
+                    Creada el {new Date(incident.created_at).toLocaleString("es-AR")}
+                    {incident.closed_at ? ` · cerrada el ${new Date(incident.closed_at).toLocaleString("es-AR")}` : ""}
+                  </p>
+                )}
+              </div>
             </div>
+            {!isCreating && incident && (
+              <div className="grid min-w-[220px] gap-3 sm:grid-cols-2">
+                <div className="rounded-2xl bg-gray-50 px-4 py-3">
+                  <p className="text-xs uppercase tracking-wide text-gray-400">Hallazgos sugeridos</p>
+                  <p className="mt-1 text-lg font-semibold text-gray-900">{suggestedCount}</p>
+                </div>
+                <div className="rounded-2xl bg-gray-50 px-4 py-3">
+                  <p className="text-xs uppercase tracking-wide text-gray-400">Needs redefinition</p>
+                  <p className="mt-1 text-lg font-semibold text-gray-900">{needsRedefinitionCount}</p>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -238,6 +683,397 @@ export default function IncidentDetailPage() {
           </button>
         </div>
       </form>
+
+      {!isCreating && incident && (
+        <>
+          <section className="rounded-2xl border border-gray-200 bg-white p-6">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900">Acciones del análisis</h2>
+                <p className="mt-1 text-sm text-gray-500">
+                  Ejecuta el análisis semántico, revisa hallazgos y decide cuándo cerrar la incidencia.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-3">
+                <button
+                  type="button"
+                  onClick={() => analyzeMutation.mutate()}
+                  disabled={isClosed || analyzeMutation.isPending}
+                  className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-60"
+                >
+                  {analyzeMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                  Analizar incidencia
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleStatusChange(isClosed ? "open" : "closed")}
+                  disabled={updateMutation.isPending}
+                  className="inline-flex items-center gap-2 rounded-lg border border-gray-300 px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-60"
+                >
+                  <Shield className="h-4 w-4" />
+                  {isClosed ? "Reabrir incidencia" : "Cerrar incidencia"}
+                </button>
+              </div>
+            </div>
+            {isClosed && (
+              <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                La incidencia está cerrada. Puedes seguir consultando el historial, pero no disparar nuevos análisis ni editar hallazgos.
+              </div>
+            )}
+          </section>
+
+          <section className="rounded-2xl border border-gray-200 bg-white p-6">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900">Procedimientos y remediaciones relacionadas</h2>
+                <p className="mt-1 text-sm text-gray-500">
+                  Coincidencias semánticas con procedimientos actuales y trainings derivados disponibles.
+                </p>
+              </div>
+            </div>
+            <div className="mt-5 space-y-3">
+              {suggestionsLoading ? (
+                <div className="flex items-center gap-2 text-sm text-gray-400">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Buscando coincidencias semánticas...
+                </div>
+              ) : suggestions.length ? (
+                suggestions.map((suggestion) => (
+                  <div
+                    key={suggestion.training_id ?? suggestion.procedure_version_id ?? suggestion.title}
+                    className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-4"
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium text-gray-900">{suggestion.title}</p>
+                        <p className="mt-1 text-xs text-gray-500">Relación: {(suggestion.score * 100).toFixed(0)}%</p>
+                        {suggestion.snippet && (
+                          <p className="mt-2 text-sm text-gray-600">{suggestion.snippet}</p>
+                        )}
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {suggestion.procedure_id && (
+                          <Link
+                            to={`/procedures/${suggestion.procedure_id}`}
+                            className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-white"
+                          >
+                            Ver procedimiento
+                          </Link>
+                        )}
+                        {suggestion.training_id ? (
+                          <button
+                            type="button"
+                            onClick={() => linkMutation.mutate(suggestion.training_id as string)}
+                            disabled={isClosed || linkMutation.isPending}
+                            className="inline-flex items-center gap-1 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-60"
+                          >
+                            <LinkIcon className="h-3 w-3" />
+                            Vincular training
+                          </button>
+                        ) : (
+                          <span className="rounded-lg bg-white px-3 py-1.5 text-xs text-gray-500">Sin training derivado</span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <p className="text-sm text-gray-500">
+                  Todavía no hay sugerencias disponibles. Ejecuta el análisis para producir hallazgos iniciales.
+                </p>
+              )}
+            </div>
+          </section>
+
+          <section className="rounded-2xl border border-gray-200 bg-white p-6">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900">Historial de análisis</h2>
+                <p className="mt-1 text-sm text-gray-500">
+                  Runs automáticos y manuales, con hallazgos clasificados y precedentes reutilizados.
+                </p>
+              </div>
+            </div>
+            <div className="mt-5 space-y-4">
+              {analysisLoading ? (
+                <div className="flex items-center gap-2 text-sm text-gray-400">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Cargando análisis previos...
+                </div>
+              ) : analysisRuns.length ? (
+                analysisRuns.map((run) => (
+                  <div
+                    key={run.id}
+                    className={`rounded-xl border px-4 py-4 ${
+                      run.source === "manual" ? "border-emerald-100 bg-emerald-50" : "border-amber-100 bg-amber-50"
+                    }`}
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <p
+                          className={`text-xs font-semibold uppercase tracking-wide ${
+                            run.source === "manual" ? "text-emerald-700" : "text-amber-700"
+                          }`}
+                        >
+                          {run.source === "manual" ? "Análisis manual" : "Análisis IA"}
+                        </p>
+                        {run.analysis_summary && <p className="mt-1 text-sm text-gray-900">{run.analysis_summary}</p>}
+                        {run.resolution_summary && (
+                          <p className="mt-1 text-xs text-gray-600">Resolución: {run.resolution_summary}</p>
+                        )}
+                        <p className="mt-2 flex items-center gap-1 text-xs text-gray-400">
+                          <Clock className="h-3 w-3" />
+                          {new Date(run.created_at).toLocaleString("es-AR")}
+                        </p>
+                      </div>
+                      {run.source === "manual" && !isClosed && (
+                        <button
+                          type="button"
+                          onClick={() => setAnalysisDraft(buildDraftFromRun(run))}
+                          className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 px-3 py-1.5 text-xs font-medium text-emerald-700 hover:bg-white/70"
+                        >
+                          <Pencil className="h-3 w-3" />
+                          Editar
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="mt-4 space-y-2">
+                      {run.findings.length ? (
+                        run.findings.map((finding) => (
+                          <div key={finding.id} className="rounded-lg border border-white/70 bg-white/80 px-3 py-3">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span
+                                className={`inline-flex rounded-full border px-2.5 py-0.5 text-[11px] font-medium ${
+                                  findingTypeClasses[finding.finding_type]
+                                }`}
+                              >
+                                {findingTypeLabels[finding.finding_type]}
+                              </span>
+                              <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] text-gray-600">
+                                {finding.status}
+                              </span>
+                              {finding.procedure_title ? (
+                                <Link
+                                  to={`/procedures/${finding.procedure_id}`}
+                                  className="text-sm font-medium text-indigo-700 hover:underline"
+                                >
+                                  {finding.procedure_title}
+                                  {finding.version_number != null ? ` · v${finding.version_number}` : ""}
+                                </Link>
+                              ) : (
+                                <span className="text-sm font-medium text-gray-700">Sin procedimiento versionado asociado</span>
+                              )}
+                              {finding.confidence != null && (
+                                <span className="text-xs text-gray-400">{Math.round(finding.confidence * 100)}%</span>
+                              )}
+                            </div>
+                            {finding.reasoning_summary && <p className="mt-2 text-xs text-gray-600">{finding.reasoning_summary}</p>}
+                            {finding.recommended_action && (
+                              <p className="mt-1 text-xs font-medium text-gray-700">
+                                Acción recomendada: {finding.recommended_action}
+                              </p>
+                            )}
+                            {finding.training_title && (
+                              <p className="mt-1 text-xs text-indigo-600">Training derivado: {finding.training_title}</p>
+                            )}
+                          </div>
+                        ))
+                      ) : (
+                        <p className="text-sm text-gray-500">Este análisis no tiene hallazgos cargados.</p>
+                      )}
+                    </div>
+
+                    {!!run.related_matches.length && (
+                      <div className="mt-4 space-y-2">
+                        <p className="text-xs font-medium text-gray-500">Precedentes reutilizados</p>
+                        {run.related_matches.map((match) => (
+                          <div key={match.id} className="rounded-lg border border-white/70 bg-white/80 px-3 py-3">
+                            <p className="text-xs text-gray-700">
+                              {match.related_incident_description} · similitud {((match.similarity_score || 0) * 100).toFixed(0)}%
+                            </p>
+                            {match.related_analysis_summary && (
+                              <p className="mt-1 text-xs text-gray-600">Análisis previo: {match.related_analysis_summary}</p>
+                            )}
+                            {match.related_resolution_summary && (
+                              <p className="mt-1 text-xs text-gray-600">
+                                Resolución previa: {match.related_resolution_summary}
+                              </p>
+                            )}
+                            {match.rationale && <p className="mt-1 text-xs text-gray-500">{match.rationale}</p>}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))
+              ) : (
+                <p className="text-sm text-gray-500">Todavía no hay análisis guardados para esta incidencia.</p>
+              )}
+            </div>
+          </section>
+
+          <section className="rounded-2xl border border-gray-200 bg-white p-6">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900">
+                  {analysisDraft.run_id ? "Editar análisis manual" : "Guardar análisis manual"}
+                </h2>
+                <p className="mt-1 text-sm text-gray-500">
+                  Confirma o corrige la clasificación automática con hallazgos accionables.
+                </p>
+              </div>
+              {analysisDraft.run_id && (
+                <button
+                  type="button"
+                  onClick={() => setAnalysisDraft(emptyAnalysisDraft())}
+                  className="inline-flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700"
+                >
+                  <X className="h-3 w-3" />
+                  Cancelar edición
+                </button>
+              )}
+            </div>
+
+            <div className="mt-5 space-y-3">
+              <textarea
+                rows={3}
+                value={analysisDraft.analysis_summary}
+                onChange={(event) =>
+                  setAnalysisDraft((current) => ({ ...current, analysis_summary: event.target.value }))
+                }
+                disabled={isClosed}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm disabled:bg-gray-50"
+                placeholder="Conclusión o análisis del incidente..."
+              />
+              <textarea
+                rows={2}
+                value={analysisDraft.resolution_summary}
+                onChange={(event) =>
+                  setAnalysisDraft((current) => ({ ...current, resolution_summary: event.target.value }))
+                }
+                disabled={isClosed}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm disabled:bg-gray-50"
+                placeholder="Resolución o acción correctiva..."
+              />
+              <div className="space-y-3">
+                {analysisDraft.findings.map((finding, index) => (
+                  <div key={`incident-finding-${index}`} className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                    <div className="grid gap-2 md:grid-cols-2">
+                      <ProcedureVersionCombobox
+                        value={finding.procedure_version_id}
+                        options={procedureOptions}
+                        disabled={isClosed}
+                        onChange={(nextValue) =>
+                          setAnalysisDraft((current) => ({
+                            ...current,
+                            findings: current.findings.map((item, itemIndex) =>
+                              itemIndex === index ? { ...item, procedure_version_id: nextValue } : item,
+                            ),
+                          }))
+                        }
+                      />
+                      <select
+                        value={finding.finding_type}
+                        onChange={(event) =>
+                          setAnalysisDraft((current) => ({
+                            ...current,
+                            findings: current.findings.map((item, itemIndex) =>
+                              itemIndex === index
+                                ? { ...item, finding_type: event.target.value as FindingType }
+                                : item,
+                            ),
+                          }))
+                        }
+                        disabled={isClosed}
+                        className="rounded-lg border border-gray-300 px-3 py-2 text-sm disabled:bg-gray-100"
+                      >
+                        {Object.entries(findingTypeLabels).map(([value, label]) => (
+                          <option key={value} value={value}>
+                            {label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <textarea
+                      rows={2}
+                      value={finding.reasoning_summary}
+                      onChange={(event) =>
+                        setAnalysisDraft((current) => ({
+                          ...current,
+                          findings: current.findings.map((item, itemIndex) =>
+                            itemIndex === index ? { ...item, reasoning_summary: event.target.value } : item,
+                          ),
+                        }))
+                      }
+                      disabled={isClosed}
+                      className="mt-2 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm disabled:bg-gray-100"
+                      placeholder="Explicación del hallazgo..."
+                    />
+                    <textarea
+                      rows={2}
+                      value={finding.recommended_action}
+                      onChange={(event) =>
+                        setAnalysisDraft((current) => ({
+                          ...current,
+                          findings: current.findings.map((item, itemIndex) =>
+                            itemIndex === index ? { ...item, recommended_action: event.target.value } : item,
+                          ),
+                        }))
+                      }
+                      disabled={isClosed}
+                      className="mt-2 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm disabled:bg-gray-100"
+                      placeholder="Acción recomendada..."
+                    />
+                    {analysisDraft.findings.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setAnalysisDraft((current) => ({
+                            ...current,
+                            findings: current.findings.filter((_, itemIndex) => itemIndex !== index),
+                          }))
+                        }
+                        disabled={isClosed}
+                        className="mt-2 text-xs font-medium text-red-600 hover:text-red-700 disabled:opacity-50"
+                      >
+                        Eliminar hallazgo
+                      </button>
+                    )}
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  onClick={() =>
+                    setAnalysisDraft((current) => ({
+                      ...current,
+                      findings: [...current.findings, emptyFindingDraft()],
+                    }))
+                  }
+                  disabled={isClosed}
+                  className="rounded-lg border border-dashed border-gray-300 px-3 py-2 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+                >
+                  Agregar hallazgo
+                </button>
+              </div>
+              <button
+                type="button"
+                onClick={() => saveAnalysisMutation.mutate(analysisDraft)}
+                disabled={
+                  isClosed ||
+                  saveAnalysisMutation.isPending ||
+                  (!analysisDraft.analysis_summary.trim() &&
+                    !analysisDraft.resolution_summary.trim() &&
+                    !analysisDraft.findings.some(isFindingDraftFilled))
+                }
+                className="rounded-lg border border-indigo-200 px-4 py-2 text-sm font-medium text-indigo-700 hover:bg-indigo-50 disabled:opacity-50"
+              >
+                {saveAnalysisMutation.isPending ? "Guardando..." : analysisDraft.run_id ? "Actualizar análisis" : "Guardar análisis"}
+              </button>
+            </div>
+          </section>
+        </>
+      )}
     </div>
   );
 }

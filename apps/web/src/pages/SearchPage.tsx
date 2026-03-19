@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import api from "@/services/api";
 import { Search, Loader2, Clock, FileText, AlertTriangle, BookOpen } from "lucide-react";
@@ -16,6 +16,11 @@ interface SearchResult {
   training_id?: string | null;
   training_title?: string | null;
   snippet: string;
+  step_index?: number | null;
+  step_title?: string | null;
+  reference_segment_range?: string | null;
+  reference_quote?: string | null;
+  match_source?: string | null;
   start_time?: number | null;
   end_time?: number | null;
   score: number;
@@ -25,15 +30,7 @@ export default function SearchPage() {
   const role = getDemoRole();
   const user = getStoredUser();
   const [searchParams] = useSearchParams();
-  const urlQuery = searchParams.get("q") ?? "";
-  const [query, setQuery] = useState("");
-  const [submitted, setSubmitted] = useState("");
-
-  useEffect(() => {
-    if (!urlQuery || urlQuery === submitted) return;
-    setQuery(urlQuery);
-    setSubmitted(urlQuery);
-  }, [submitted, urlQuery]);
+  const submitted = (searchParams.get("q") ?? "").trim();
 
   const { data: results, isLoading: proceduresLoading } = useQuery<SearchResult[]>({
     queryKey: ["search", submitted],
@@ -74,11 +71,6 @@ export default function SearchPage() {
     (results?.length ?? 0) +
     (role === "operator" ? trainingMatches.length + incidentMatches.length : 0);
 
-  function handleSearch(e: React.FormEvent) {
-    e.preventDefault();
-    if (query.trim()) setSubmitted(query.trim());
-  }
-
   return (
     <div className="mx-auto max-w-3xl">
       <h1 className="text-2xl font-bold text-gray-900">Búsqueda Semántica</h1>
@@ -88,26 +80,11 @@ export default function SearchPage() {
           : "Busca procedimientos por significado usando la inteligencia generada a nivel de `ProcedureVersion`."}
       </p>
 
-      <form onSubmit={handleSearch} className="mt-6 flex gap-3">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-          <input
-            type="text"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            className="w-full rounded-lg border border-gray-300 py-2.5 pl-10 pr-3 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200"
-            placeholder="Ej: elaboración de chocotorta, seguridad en cocina…"
-          />
-        </div>
-        <button
-          type="submit"
-          disabled={!query.trim() || isLoading}
-          className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
-        >
-          {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
-          Buscar
-        </button>
-      </form>
+      <div className="mt-4 rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-600">
+        {submitted
+          ? `Mostrando resultados para "${submitted}". Puedes cambiar la búsqueda desde el buscador superior.`
+          : "Usa el buscador superior para iniciar una búsqueda semántica."}
+      </div>
 
       <div className="mt-8">
         {isLoading && (
@@ -144,8 +121,21 @@ export default function SearchPage() {
                         <h3 className="truncate text-sm font-semibold text-gray-900">
                           {r.procedure_code} · {r.procedure_title}
                         </h3>
-                        <p className="mt-1 text-xs text-indigo-600">Versión relevante: v{r.version_number}</p>
+                        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                          <p className="text-indigo-600">Versión relevante: v{r.version_number}</p>
+                          <p className="text-gray-500">Relación: {(r.score * 100).toFixed(0)}%</p>
+                        </div>
+                        {r.step_title && (
+                          <p className="mt-2 text-xs font-medium text-gray-500">
+                            Paso {r.step_index}: {r.step_title}
+                          </p>
+                        )}
                         <p className="mt-2 text-sm leading-relaxed text-gray-600">{r.snippet}</p>
+                        {r.reference_segment_range && (
+                          <p className="mt-2 text-xs text-gray-500">
+                            Referencia fuente: {r.reference_segment_range}
+                          </p>
+                        )}
                         {r.training_title && (
                           <p className="mt-2 text-xs text-gray-500">
                             Training derivado disponible: {r.training_title}

@@ -5,6 +5,20 @@ import { AlertCircle, ArrowLeft, FileText, Loader2, Sparkles, Trash2 } from "luc
 
 import api from "@/services/api";
 
+interface ProcedureStructure {
+  title?: string;
+  objectives?: string[];
+  steps?: { title: string; description: string; evidence?: { segment_range?: string }; origin?: string; edited?: boolean }[];
+  critical_points?: { text: string; why: string; evidence?: { segment_range?: string } }[];
+}
+
+type NormalizedProcedureStructure = {
+  title: string;
+  objectives: string[];
+  steps: { title: string; description: string; evidence?: { segment_range?: string }; origin?: string; edited?: boolean }[];
+  critical_points: { text: string; why: string; evidence?: { segment_range?: string } }[];
+};
+
 interface ProcedureVersion {
   id: string;
   version_number: number;
@@ -14,6 +28,7 @@ interface ProcedureVersion {
   change_reason?: string | null;
   effective_from?: string | null;
   content_text?: string | null;
+  content_json?: ProcedureStructure | null;
   source_asset_type?: string | null;
   source_storage_key?: string | null;
   source_mime?: string | null;
@@ -22,12 +37,7 @@ interface ProcedureVersion {
   source_processing_error?: string | null;
   source_processed_at?: string | null;
   source_result?: {
-    structure: {
-      title: string;
-      objectives: string[];
-      steps: { title: string; description: string; evidence?: { segment_range?: string } }[];
-      critical_points: { text: string; why: string; evidence?: { segment_range?: string } }[];
-    };
+    structure: ProcedureStructure;
     transcript_raw: string;
   } | null;
   derived_training?: {
@@ -44,41 +54,25 @@ interface ProcedureDetail {
   description?: string | null;
   owner_role_name?: string | null;
   versions: ProcedureVersion[];
+  incident_signals?: ProcedureIncidentSignal[];
 }
 
-interface IncidentRecord {
-  id: string;
-  description: string;
-  severity: string;
-  location?: string | null;
-  created_at: string;
-}
-
-interface IncidentAnalysisFinding {
-  id: string;
-  procedure_id?: string | null;
-  procedure_version_id?: string | null;
+interface ProcedureIncidentSignal {
+  incident_id: string;
+  incident_status: "open" | "closed";
+  incident_severity: string;
+  incident_description: string;
+  incident_location?: string | null;
+  incident_created_at: string;
+  analysis_run_id: string;
+  analysis_summary?: string | null;
+  resolution_summary?: string | null;
+  finding_id: string;
+  finding_type: "not_followed" | "needs_redefinition" | "missing_procedure" | "contributing_factor";
+  finding_status: string;
   confidence?: number | null;
   reasoning_summary?: string | null;
   recommended_action?: string | null;
-  status: string;
-  created_at: string;
-}
-
-interface IncidentAnalysisRun {
-  id: string;
-  incident_id: string;
-  analysis_summary?: string | null;
-  resolution_summary?: string | null;
-  created_at: string;
-  findings: IncidentAnalysisFinding[];
-}
-
-interface ProcedureIncidentContext {
-  incident: IncidentRecord;
-  run: IncidentAnalysisRun;
-  finding: IncidentAnalysisFinding;
-  pendingCount: number;
 }
 
 interface QuizQuestion {
@@ -150,13 +144,27 @@ function formatDate(value?: string | null) {
   return new Date(value).toLocaleDateString("es-AR");
 }
 
-function buildGeneratedText(version: ProcedureVersion | null, context: ProcedureIncidentContext | null): string[] {
-  const parts = context
+function normalizeStructure(structure: ProcedureStructure | null | undefined): NormalizedProcedureStructure | null {
+  if (!structure) return null;
+  return {
+    title: structure.title?.trim() || "Procedimiento",
+    objectives: Array.isArray(structure.objectives) ? structure.objectives.filter(Boolean) : [],
+    steps: Array.isArray(structure.steps) ? structure.steps : [],
+    critical_points: Array.isArray(structure.critical_points) ? structure.critical_points : [],
+  };
+}
+
+function getDisplayStructure(version: ProcedureVersion | null): NormalizedProcedureStructure | null {
+  return normalizeStructure(version?.content_json ?? version?.source_result?.structure ?? null);
+}
+
+function buildGeneratedText(version: ProcedureVersion | null, signal: ProcedureIncidentSignal | null): string[] {
+  const parts = signal
     ? [
-        context.run.analysis_summary,
-        context.finding.reasoning_summary,
-        context.finding.recommended_action,
-        context.run.resolution_summary,
+        signal.analysis_summary,
+        signal.reasoning_summary,
+        signal.recommended_action,
+        signal.resolution_summary,
       ]
     : [];
 
@@ -168,7 +176,7 @@ function buildGeneratedText(version: ProcedureVersion | null, context: Procedure
     return Array.from(new Set(normalized));
   }
 
-  const structure = version?.source_result?.structure;
+  const structure = getDisplayStructure(version);
   if (structure) {
     const summary: string[] = [];
     if (structure.objectives.length > 0) {
@@ -221,10 +229,11 @@ function buildSourceDocumentItems(version: ProcedureVersion | null): SourceDocum
   }
 
   if (version.source_result?.structure) {
+    const structure = normalizeStructure(version.source_result.structure);
     items.push({
       title: "Estructura extraída",
-      detail: version.source_result.structure.title,
-      meta: `${version.source_result.structure.steps.length} pasos · ${version.source_result.structure.critical_points.length} puntos críticos`,
+      detail: structure?.title || "Procedimiento",
+      meta: `${structure?.steps.length ?? 0} pasos · ${structure?.critical_points.length ?? 0} puntos críticos`,
     });
   }
 
@@ -255,55 +264,6 @@ export default function ProcedureDetailPage() {
     const versions = procedure?.versions ?? [];
     return [...versions].sort((a, b) => b.version_number - a.version_number)[0] ?? null;
   }, [procedure]);
-
-  const incidentContextQuery = useQuery<ProcedureIncidentContext | null>({
-    queryKey: ["procedure-incident-context", id, procedure?.versions.map((version) => version.id).join(",")],
-    enabled: Boolean(procedure?.id),
-    queryFn: async () => {
-      const incidents = await api.get("/incidents").then((r) => r.data as IncidentRecord[]);
-      const currentProcedure = procedure;
-      if (!currentProcedure) return null;
-
-      const versionIds = new Set(currentProcedure.versions.map((version) => version.id));
-      const incidentRuns = await Promise.all(
-        incidents.map(async (incident) => ({
-          incident,
-          runs: await api.get(`/incidents/${incident.id}/analysis-runs`).then((r) => r.data as IncidentAnalysisRun[]),
-        })),
-      );
-
-      const matches = incidentRuns.flatMap(({ incident, runs }) =>
-        runs.flatMap((run) =>
-          run.findings
-            .filter(
-              (finding) =>
-                finding.procedure_id === currentProcedure.id ||
-                (finding.procedure_version_id ? versionIds.has(finding.procedure_version_id) : false),
-            )
-            .map((finding) => ({ incident, run, finding })),
-        ),
-      );
-
-      if (!matches.length) {
-        return null;
-      }
-
-      const pendingCount = new Set(
-        matches.filter((match) => match.finding.status === "suggested").map((match) => match.incident.id),
-      ).size;
-
-      const sortedMatches = [...matches].sort((left, right) => {
-        const leftPriority = left.finding.status === "suggested" ? 0 : 1;
-        const rightPriority = right.finding.status === "suggested" ? 0 : 1;
-        if (leftPriority !== rightPriority) {
-          return leftPriority - rightPriority;
-        }
-        return new Date(right.run.created_at).getTime() - new Date(left.run.created_at).getTime();
-      });
-
-      return { ...sortedMatches[0], pendingCount };
-    },
-  });
 
   const { data: quiz = [], isLoading: quizLoading } = useQuery<QuizQuestion[]>({
     queryKey: ["procedure-quiz", latestUpdate?.derived_training?.id],
@@ -346,7 +306,13 @@ export default function ProcedureDetailPage() {
 
   const updateHistory = [...procedure.versions].sort((a, b) => b.version_number - a.version_number);
   const sourceDocuments = buildSourceDocumentItems(latestUpdate);
-  const generatedText = buildGeneratedText(latestUpdate, incidentContextQuery.data ?? null);
+  const incidentSignals = procedure.incident_signals ?? [];
+  const primaryIncidentSignal = incidentSignals[0] ?? null;
+  const pendingIncidentCount = new Set(
+    incidentSignals.filter((signal) => signal.finding_status === "suggested").map((signal) => signal.incident_id),
+  ).size;
+  const needsRedefinitionSignals = incidentSignals.filter((signal) => signal.finding_type === "needs_redefinition");
+  const generatedText = buildGeneratedText(latestUpdate, primaryIncidentSignal);
 
   function handleDelete() {
     if (deleteMutation.isPending) return;
@@ -396,11 +362,11 @@ export default function ProcedureDetailPage() {
             <div className="space-y-3">
               <div className="flex flex-wrap items-center gap-3">
                 <h1 className="text-3xl font-bold text-gray-900">{procedure.title}</h1>
-                {(incidentContextQuery.data?.pendingCount ?? 0) > 0 && (
+                {pendingIncidentCount > 0 && (
                   <span className="inline-flex items-center gap-2 rounded-full border border-red-200 bg-red-50 px-3 py-1 text-xs font-medium text-red-700">
                     <AlertCircle className="h-3.5 w-3.5" />
-                    {incidentContextQuery.data?.pendingCount} incidencia
-                    {incidentContextQuery.data?.pendingCount === 1 ? " pendiente" : "s pendientes"}
+                    {pendingIncidentCount} incidencia
+                    {pendingIncidentCount === 1 ? " pendiente" : "s pendientes"}
                   </span>
                 )}
               </div>
@@ -436,27 +402,108 @@ export default function ProcedureDetailPage() {
         )}
       </div>
 
+      {incidentSignals.length > 0 && (
+        <section className="rounded-3xl border border-gray-200 bg-white p-6">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h2 className="text-xl font-semibold text-gray-900">Incidencias abiertas relacionadas</h2>
+              <p className="mt-1 text-sm text-gray-500">
+                Hallazgos activos que afectan este procedimiento y pueden requerir acción correctiva o redefinición.
+              </p>
+            </div>
+            <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-medium text-gray-700">
+              {incidentSignals.length} señal{incidentSignals.length === 1 ? "" : "es"}
+            </span>
+          </div>
+
+          {needsRedefinitionSignals.length > 0 && (
+            <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4">
+              <p className="text-sm font-semibold text-amber-900">
+                Este procedimiento requiere redefinición según incidencias abiertas.
+              </p>
+              <p className="mt-1 text-sm text-amber-800">
+                Hay {needsRedefinitionSignals.length} hallazgo{needsRedefinitionSignals.length === 1 ? "" : "s"} de tipo
+                {" "}
+                <span className="font-medium">needs_redefinition</span> asociados a este procedimiento.
+              </p>
+            </div>
+          )}
+
+          <div className="mt-5 space-y-3">
+            {incidentSignals.map((signal) => (
+              <div key={signal.finding_id} className="rounded-2xl border border-gray-200 bg-gray-50 px-4 py-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="rounded-full bg-gray-100 px-2.5 py-1 text-[11px] font-medium text-gray-700">
+                        {getSeverityLabel(signal.incident_severity) || signal.incident_severity}
+                      </span>
+                      <span
+                        className={`rounded-full border px-2.5 py-1 text-[11px] font-medium ${
+                          signal.finding_type === "needs_redefinition"
+                            ? "border-amber-200 bg-amber-50 text-amber-700"
+                            : signal.finding_type === "not_followed"
+                              ? "border-red-200 bg-red-50 text-red-700"
+                              : signal.finding_type === "missing_procedure"
+                                ? "border-purple-200 bg-purple-50 text-purple-700"
+                                : "border-slate-200 bg-slate-50 text-slate-700"
+                        }`}
+                      >
+                        {signal.finding_type}
+                      </span>
+                      <span className="rounded-full bg-white px-2.5 py-1 text-[11px] text-gray-500">
+                        {signal.finding_status}
+                      </span>
+                    </div>
+                    <p className="mt-3 text-sm text-gray-800">{signal.incident_description}</p>
+                    {signal.reasoning_summary && (
+                      <p className="mt-2 text-sm text-gray-600">{signal.reasoning_summary}</p>
+                    )}
+                    {signal.recommended_action && (
+                      <p className="mt-1 text-sm font-medium text-gray-700">
+                        Acción recomendada: {signal.recommended_action}
+                      </p>
+                    )}
+                    <p className="mt-2 text-xs text-gray-400">
+                      {formatDate(signal.incident_created_at)}
+                      {signal.incident_location ? ` · ${signal.incident_location}` : ""}
+                      {signal.confidence != null ? ` · ${(signal.confidence * 100).toFixed(0)}%` : ""}
+                    </p>
+                  </div>
+                  <Link
+                    to={`/incidents/${signal.incident_id}`}
+                    className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-white"
+                  >
+                    Ver incidencia
+                  </Link>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
       <section className="rounded-3xl border border-gray-200 bg-white p-6">
         <div className="flex items-start justify-between gap-4">
           <div>
             <h2 className="text-xl font-semibold text-gray-900">Resultado del proceso en texto generado por la IA</h2>
             <p className="mt-1 text-sm text-gray-500">
-              {incidentContextQuery.data
+              {primaryIncidentSignal
                 ? "Resumen compuesto desde la incidencia relacionada y su análisis."
                 : "Resumen compuesto con la mejor información disponible de la actualización vigente."}
             </p>
           </div>
-          {incidentContextQuery.data && (
+          {primaryIncidentSignal && (
             <div className="rounded-full bg-gray-100 px-3 py-1 text-xs font-medium text-gray-700">
-              {getSeverityLabel(incidentContextQuery.data.incident.severity) || "Incidencia"}
+              {getSeverityLabel(primaryIncidentSignal.incident_severity) || "Incidencia"}
             </div>
           )}
         </div>
 
         <div className="mt-6 rounded-2xl border border-gray-200 px-5 py-5">
-          {incidentContextQuery.data && (
+          {primaryIncidentSignal && (
             <div className="mb-4 rounded-xl bg-gray-50 px-4 py-3 text-sm text-gray-600">
-              {incidentContextQuery.data.incident.description}
+              {primaryIncidentSignal.incident_description}
             </div>
           )}
           <div className="space-y-4 text-sm leading-7 text-gray-700">

@@ -17,6 +17,9 @@ interface ProcedureCreateResponse {
 const MAX_SOURCE_FILE_SIZE_BYTES = 50 * 1024 * 1024;
 
 function getErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message;
+  }
   if (
     typeof error === "object" &&
     error !== null &&
@@ -26,6 +29,24 @@ function getErrorMessage(error: unknown, fallback: string) {
     return (error as { response?: { data?: { detail?: string } } }).response!.data!.detail!;
   }
   return fallback;
+}
+
+async function uploadSourceFile(file: File, presignedUrl: string, contentType: string) {
+  const response = await fetch(presignedUrl, {
+    method: "PUT",
+    body: file,
+    headers: { "Content-Type": contentType },
+  });
+
+  if (!response.ok) {
+    const responseText = await response.text();
+    const detail = responseText.trim();
+    throw new Error(
+      detail
+        ? `Fallo la carga del archivo fuente (${response.status}): ${detail}`
+        : `Fallo la carga del archivo fuente (${response.status}).`,
+    );
+  }
 }
 
 export default function ProcedureCreatePage() {
@@ -80,11 +101,7 @@ export default function ProcedureCreatePage() {
           content_type: contentType,
         });
 
-        await fetch(presign.presigned_url, {
-          method: "PUT",
-          body: sourceFile,
-          headers: { "Content-Type": contentType },
-        });
+        await uploadSourceFile(sourceFile, presign.presigned_url, contentType);
 
         sourceAsset = {
           storage_key: presign.storage_key,

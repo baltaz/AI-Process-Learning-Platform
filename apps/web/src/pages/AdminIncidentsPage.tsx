@@ -1,3 +1,4 @@
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, ArrowRight, Clock3, Loader2, Plus } from "lucide-react";
 import { Link } from "react-router-dom";
@@ -8,9 +9,11 @@ interface IncidentItem {
   id: string;
   description: string;
   severity: string;
+  status: "open" | "closed";
   role_name?: string | null;
   location?: string | null;
   created_at: string;
+  closed_at?: string | null;
 }
 
 const severityMeta: Record<string, string> = {
@@ -27,11 +30,35 @@ const severityLabel: Record<string, string> = {
   critical: "Crítica",
 };
 
+const statusMeta: Record<IncidentItem["status"], string> = {
+  open: "bg-indigo-50 text-indigo-700",
+  closed: "bg-slate-100 text-slate-700",
+};
+
+const statusLabel: Record<IncidentItem["status"], string> = {
+  open: "Abierta",
+  closed: "Cerrada",
+};
+
 export default function AdminIncidentsPage() {
+  const [statusFilter, setStatusFilter] = useState<"all" | IncidentItem["status"]>("all");
   const { data: incidents, isLoading } = useQuery<IncidentItem[]>({
     queryKey: ["incidents"],
     queryFn: () => api.get("/incidents").then((r) => r.data),
   });
+  const filteredIncidents = useMemo(() => {
+    if (!incidents) return [];
+    if (statusFilter === "all") return incidents;
+    return incidents.filter((incident) => incident.status === statusFilter);
+  }, [incidents, statusFilter]);
+  const counts = useMemo(
+    () => ({
+      all: incidents?.length ?? 0,
+      open: incidents?.filter((incident) => incident.status === "open").length ?? 0,
+      closed: incidents?.filter((incident) => incident.status === "closed").length ?? 0,
+    }),
+    [incidents],
+  );
 
   return (
     <div className="mx-auto max-w-6xl space-y-6">
@@ -51,18 +78,39 @@ export default function AdminIncidentsPage() {
         </Link>
       </div>
 
+      <div className="flex flex-wrap gap-2">
+        {[
+          { value: "all" as const, label: "Todas", count: counts.all },
+          { value: "open" as const, label: "Abiertas", count: counts.open },
+          { value: "closed" as const, label: "Cerradas", count: counts.closed },
+        ].map((filter) => (
+          <button
+            key={filter.value}
+            type="button"
+            onClick={() => setStatusFilter(filter.value)}
+            className={`rounded-full px-3 py-1.5 text-xs font-medium transition ${
+              statusFilter === filter.value
+                ? "bg-indigo-600 text-white"
+                : "bg-white text-gray-600 ring-1 ring-gray-200 hover:bg-gray-50"
+            }`}
+          >
+            {filter.label} · {filter.count}
+          </button>
+        ))}
+      </div>
+
       {isLoading ? (
         <div className="flex items-center justify-center py-20">
           <Loader2 className="h-8 w-8 animate-spin text-indigo-500" />
         </div>
-      ) : !incidents?.length ? (
+      ) : !filteredIncidents.length ? (
         <div className="rounded-2xl border-2 border-dashed border-gray-200 py-16 text-center">
           <AlertTriangle className="mx-auto h-10 w-10 text-gray-300" />
-          <p className="mt-3 text-sm font-medium text-gray-600">No hay incidencias registradas</p>
+          <p className="mt-3 text-sm font-medium text-gray-600">No hay incidencias para este filtro</p>
         </div>
       ) : (
         <div className="space-y-3">
-          {incidents.map((incident) => (
+          {filteredIncidents.map((incident) => (
             <Link
               key={incident.id}
               to={`/incidents/${incident.id}`}
@@ -78,6 +126,9 @@ export default function AdminIncidentsPage() {
                     >
                       {severityLabel[incident.severity] ?? incident.severity}
                     </span>
+                    <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${statusMeta[incident.status]}`}>
+                      {statusLabel[incident.status]}
+                    </span>
                     {incident.role_name && (
                       <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs text-slate-700">
                         {incident.role_name}
@@ -92,7 +143,9 @@ export default function AdminIncidentsPage() {
                   <p className="mt-3 line-clamp-2 text-sm text-gray-800">{incident.description}</p>
                   <div className="mt-3 flex items-center gap-1 text-xs text-gray-400">
                     <Clock3 className="h-3.5 w-3.5" />
-                    {new Date(incident.created_at).toLocaleString("es-AR")}
+                    {incident.status === "closed" && incident.closed_at
+                      ? `Cerrada ${new Date(incident.closed_at).toLocaleString("es-AR")}`
+                      : new Date(incident.created_at).toLocaleString("es-AR")}
                   </div>
                 </div>
                 <ArrowRight className="h-5 w-5 flex-shrink-0 text-gray-300" />
