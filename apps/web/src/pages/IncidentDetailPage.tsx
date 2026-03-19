@@ -12,6 +12,7 @@ import {
   Search,
   Shield,
   Sparkles,
+  Trash2,
   X,
 } from "lucide-react";
 import { Link, useNavigate, useParams } from "react-router-dom";
@@ -482,6 +483,17 @@ export default function IncidentDetailPage() {
       setError(getErrorMessage(mutationError, "No se pudo guardar el análisis manual."));
     },
   });
+  const deleteMutation = useMutation({
+    mutationFn: () => api.delete(`/incidents/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["incidents"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      navigate("/incidents");
+    },
+    onError: (mutationError) => {
+      setError(getErrorMessage(mutationError, "No se pudo eliminar la incidencia."));
+    },
+  });
 
   function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -505,6 +517,17 @@ export default function IncidentDetailPage() {
     setError("");
     updateMutation.mutate({ status: nextStatus });
   }
+
+  function handleDelete() {
+    if (isCreating || !incident || deleteMutation.isPending) return;
+    const confirmed = window.confirm(
+      `¿Seguro que quieres eliminar la incidencia? También se eliminarán sus análisis e historial relacionado.`
+    );
+    if (!confirmed) return;
+    setError("");
+    deleteMutation.mutate();
+  }
+
   const procedureOptions = useMemo<ProcedureOption[]>(
     () =>
       [
@@ -596,15 +619,26 @@ export default function IncidentDetailPage() {
               </div>
             </div>
             {!isCreating && incident && (
-              <div className="grid min-w-[220px] gap-3 sm:grid-cols-2">
-                <div className="rounded-2xl bg-gray-50 px-4 py-3">
-                  <p className="text-xs uppercase tracking-wide text-gray-400">Hallazgos manuales</p>
-                  <p className="mt-1 text-lg font-semibold text-gray-900">{confirmedCount}</p>
+              <div className="flex min-w-[220px] flex-col items-stretch gap-3">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-2xl bg-gray-50 px-4 py-3">
+                    <p className="text-xs uppercase tracking-wide text-gray-400">Hallazgos manuales</p>
+                    <p className="mt-1 text-lg font-semibold text-gray-900">{confirmedCount}</p>
+                  </div>
+                  <div className="rounded-2xl bg-gray-50 px-4 py-3">
+                    <p className="text-xs uppercase tracking-wide text-gray-400">Needs redefinition</p>
+                    <p className="mt-1 text-lg font-semibold text-gray-900">{needsRedefinitionCount}</p>
+                  </div>
                 </div>
-                <div className="rounded-2xl bg-gray-50 px-4 py-3">
-                  <p className="text-xs uppercase tracking-wide text-gray-400">Needs redefinition</p>
-                  <p className="mt-1 text-lg font-semibold text-gray-900">{needsRedefinitionCount}</p>
-                </div>
+                <button
+                  type="button"
+                  onClick={handleDelete}
+                  disabled={deleteMutation.isPending}
+                  className="inline-flex items-center justify-center gap-2 rounded-lg border border-red-200 px-4 py-2.5 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-60"
+                >
+                  {deleteMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                  Eliminar incidencia
+                </button>
               </div>
             )}
           </div>
