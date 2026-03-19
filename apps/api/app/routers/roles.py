@@ -29,11 +29,18 @@ from app.services.compliance_service import get_active_user_ids_for_role, sync_p
 router = APIRouter(prefix="/roles", tags=["roles"])
 
 
+def _valid_role_task_links(role: Role) -> list[RoleTaskLink]:
+    # TEMPORARY: tolerate orphan links from inconsistent DB state in production.
+    # Revert this filter once orphan rows are cleaned up and FK consistency is verified.
+    return [link for link in role.task_links if link.task is not None]
+
+
 def _procedure_count(role: Role) -> int:
     procedure_ids: set[uuid.UUID] = set()
-    for link in role.task_links:
+    for link in _valid_role_task_links(role):
         for procedure_link in link.task.procedure_links:
-            procedure_ids.add(procedure_link.procedure_id)
+            if procedure_link.procedure is not None:
+                procedure_ids.add(procedure_link.procedure_id)
     return len(procedure_ids)
 
 
@@ -46,8 +53,11 @@ def _role_out(role: Role) -> RoleOut:
 
 def _role_detail_out(role: Role) -> RoleDetailOut:
     procedure_map: dict[uuid.UUID, dict] = {}
-    for link in role.task_links:
+    valid_links = _valid_role_task_links(role)
+    for link in valid_links:
         for procedure_link in link.task.procedure_links:
+            if procedure_link.procedure is None:
+                continue
             procedure_map[procedure_link.procedure_id] = {
                 "id": link.task_id,
                 "procedure_id": procedure_link.procedure_id,
@@ -65,7 +75,7 @@ def _role_detail_out(role: Role) -> RoleDetailOut:
                 "task_title": link.task.title,
                 "is_required": link.is_required,
             }
-            for link in role.task_links
+            for link in valid_links
         ],
         procedures=list(procedure_map.values()),
     )
@@ -198,6 +208,7 @@ async def list_role_task_links(db: AsyncSession = Depends(get_db)):
             is_required=link.is_required,
         )
         for link in links
+        if link.role is not None and link.task is not None
     ]
 
 
