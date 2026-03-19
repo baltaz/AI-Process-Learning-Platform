@@ -155,3 +155,59 @@ async def get_latest_procedure_version(db: AsyncSession, procedure_id: uuid.UUID
         .scalars()
         .first()
     )
+
+
+async def get_impacted_user_ids_for_procedure(db: AsyncSession, procedure_id: uuid.UUID) -> list[uuid.UUID]:
+    result = await db.execute(
+        select(UserRoleAssignment.user_id)
+        .join(RoleTaskLink, RoleTaskLink.role_id == UserRoleAssignment.role_id)
+        .join(TaskProcedureLink, TaskProcedureLink.task_id == RoleTaskLink.task_id)
+        .where(
+            UserRoleAssignment.status == "active",
+            RoleTaskLink.is_required.is_(True),
+            TaskProcedureLink.procedure_id == procedure_id,
+        )
+    )
+    return list(dict.fromkeys(result.scalars().all()))
+
+
+async def sync_procedure_rollout(db: AsyncSession, procedure_id: uuid.UUID) -> list[UserProcedureCompliance]:
+    user_ids = await get_impacted_user_ids_for_procedure(db, procedure_id)
+    if not user_ids:
+        return []
+
+    latest_version = await get_latest_procedure_version(db, procedure_id)
+    if latest_version is None:
+        return []
+
+    training = (
+        await db.execute(select(Training).where(Training.procedure_version_id == latest_version.id))
+    ).scalar_one_or_none()
+
+    if training is not None:
+        existing_assignment_user_ids = set(
+            (
+                await db.execute(
+                    select(Assignment.user_id).where(
+                        Assignment.training_id == training.id,
+                        Assignment.user_id.in_(user_ids),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for user_id in user_ids:
+            if user_id in existing_assignment_user_ids:
+                continue
+            db.add(
+                Assignment(
+                    training_id=training.id,
+                    user_id=user_id,
+                    assignment_type="training",
+                    status="assigned",
+                )
+            )
+        await db.flush()
+
+    return await sync_user_procedure_compliance(db, user_ids=user_ids)

@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
@@ -40,6 +41,29 @@ from app.services.incident_memory_service import (
 from app.services.search_service import rank_procedure_versions_by_embedding
 
 router = APIRouter(prefix="/incidents", tags=["incidents"])
+INCIDENT_REDEFINITION_HINTS = (
+    "cambiar",
+    "cambio",
+    "ajustar",
+    "actualizar",
+    "redefin",
+    "mejorar",
+    "otra forma",
+    "desactualiz",
+    "insuficiente",
+    "confuso",
+    "ambigu",
+    "no contempla",
+)
+INCIDENT_GAP_HINTS = (
+    "no existe procedimiento",
+    "falta procedimiento",
+    "sin procedimiento",
+    "sin protocolo",
+    "no estaba definido",
+    "no estaba especificado",
+    "nadie sabia",
+)
 
 
 def _analysis_run_query():
@@ -51,12 +75,15 @@ def _incident_out(item: Incident) -> IncidentOut:
         id=item.id,
         description=item.description,
         severity=item.severity,
+        status=item.status,
         role_id=item.role_id,
         role_name=item.role.name if getattr(item, "role", None) else None,
         role_code=item.role.code if getattr(item, "role", None) else None,
         location=item.location,
         created_by=item.created_by,
         created_at=item.created_at,
+        closed_by=item.closed_by,
+        closed_at=item.closed_at,
     )
 
 
@@ -134,6 +161,18 @@ async def _validate_analysis_run_payload(payload: IncidentAnalysisRunCreate | In
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Procedure version not found")
 
 
+def _apply_incident_status_change(incident: Incident, next_status: str, current_user: User) -> None:
+    if next_status == incident.status:
+        return
+    incident.status = next_status
+    if next_status == "closed":
+        incident.closed_at = datetime.now(timezone.utc)
+        incident.closed_by = current_user.id
+        return
+    incident.closed_at = None
+    incident.closed_by = None
+
+
 def _default_action_for_type(finding_type: str) -> str:
     if finding_type == "not_followed":
         return "Verificar cumplimiento operativo y reforzar el entrenamiento asociado."
@@ -142,6 +181,42 @@ def _default_action_for_type(finding_type: str) -> str:
     if finding_type == "missing_procedure":
         return "Disenar y documentar un procedimiento nuevo para cubrir este escenario."
     return "Validar el rol de este procedimiento en el incidente y definir la remediacion mas adecuada."
+
+
+def _contains_any(text: str, fragments: tuple[str, ...]) -> bool:
+    lowered = text.lower()
+    return any(fragment in lowered for fragment in fragments)
+
+
+def _dominant_precedent_finding_type(precedent_findings: list[tuple[dict, IncidentAnalysisFinding]]) -> str | None:
+    prioritized = [finding.finding_type for _related, finding in precedent_findings if finding.finding_type != "contributing_factor"]
+    if prioritized:
+        return prioritized[0]
+    if precedent_findings:
+        return precedent_findings[0][1].finding_type
+    return None
+
+
+def _infer_finding_type_for_match(
+    incident: Incident,
+    match: dict,
+    precedent_findings: list[tuple[dict, IncidentAnalysisFinding]],
+) -> str:
+    precedent_type = _dominant_precedent_finding_type(precedent_findings)
+    if precedent_type in {"not_followed", "needs_redefinition", "missing_procedure"}:
+        return precedent_type
+
+    description = incident.description or ""
+    if _contains_any(description, INCIDENT_REDEFINITION_HINTS):
+        return "needs_redefinition"
+
+    if match.get("step_title") or match.get("reference_segment_range") or match.get("reference_quote"):
+        return "not_followed"
+
+    if (match.get("score") or 0) >= 0.72:
+        return "needs_redefinition"
+
+    return "not_followed"
 
 
 def _finding_payload_to_model(payload, source: str) -> IncidentAnalysisFinding:
@@ -170,6 +245,7 @@ async def create_incident(
     incident = Incident(
         description=payload.description,
         severity=payload.severity,
+        status="open",
         role_id=payload.role_id,
         location=payload.location,
         created_by=current_user.id,
@@ -216,6 +292,9 @@ async def update_incident(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role not found")
 
     for field, value in changes.items():
+        if field == "status":
+            _apply_incident_status_change(incident, value, current_user)
+            continue
         setattr(incident, field, value)
 
     if "description" in changes and changes["description"]:
@@ -288,6 +367,8 @@ async def create_incident_analysis_run(
     incident = (await db.execute(select(Incident).where(Incident.id == incident_id))).scalar_one_or_none()
     if incident is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Incident not found")
+    if incident.status == "closed":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Closed incidents cannot receive new analysis runs")
     await _validate_analysis_run_payload(payload, db)
 
     run = IncidentAnalysisRun(
@@ -327,6 +408,11 @@ async def update_incident_analysis_run(
     ).scalar_one_or_none()
     if run is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Incident analysis run not found")
+    incident = (await db.execute(select(Incident).where(Incident.id == incident_id))).scalar_one_or_none()
+    if incident is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Incident not found")
+    if incident.status == "closed":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Closed incidents cannot be edited")
 
     await _validate_analysis_run_payload(payload, db)
     run.analysis_summary = payload.analysis_summary
@@ -354,6 +440,8 @@ async def analyze_incident_procedures(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Incident not found")
     if incident.embedding is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Incident has no embedding")
+    if incident.status == "closed":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Closed incidents cannot be analyzed")
 
     related_incidents = await get_similar_incident_analysis_runs(incident_id, incident.embedding, db=db)
     matches = await rank_procedure_versions_by_embedding(incident.embedding, limit=5, db=db, min_score=0.5)
@@ -390,9 +478,10 @@ async def analyze_incident_procedures(
 
         reasoning_summary = (
             "Coincidencia semántica entre la descripción del incidente y el procedimiento versionado. "
+            f"{f'Paso relevante: {match['step_title']}. ' if match.get('step_title') else ''}"
             f"Fragmento relevante: {match['snippet']}"
         )
-        finding_type = "contributing_factor"
+        finding_type = _infer_finding_type_for_match(incident, match, precedent_findings)
         recommended_action = _default_action_for_type(finding_type)
         confidence = match["score"]
 
@@ -403,7 +492,7 @@ async def analyze_incident_procedures(
             )
             reasoning_summary = f"{reasoning_summary} {precedent_context}"
             dominant_finding = precedent_findings[0][1]
-            finding_type = dominant_finding.finding_type
+            finding_type = _infer_finding_type_for_match(incident, match, precedent_findings)
             recommended_action = dominant_finding.recommended_action or _default_action_for_type(finding_type)
             confidence = max(confidence or 0, dominant_finding.confidence or 0, 0.6)
 
@@ -446,7 +535,9 @@ async def analyze_incident_procedures(
                 )
             )
 
-    if not findings:
+    should_add_gap_finding = not findings or _contains_any(incident.description or "", INCIDENT_GAP_HINTS)
+
+    if should_add_gap_finding:
         findings.append(
             IncidentAnalysisFinding(
                 analysis_run_id=created_run.id,
@@ -462,7 +553,7 @@ async def analyze_incident_procedures(
             )
         )
 
-    created_run.findings = findings
+    db.add_all(findings)
 
     for related in related_incidents:
         db.add(

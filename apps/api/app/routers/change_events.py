@@ -110,6 +110,7 @@ async def analyze_change_event_impact(
             impact_level=impact_level,
             rationale=(
                 f"Coincidencia semántica con {match['procedure_code']} v{match['version_number']} "
+                f"{f'en el paso {match['step_index']}: {match['step_title']} ' if match.get('step_title') else ''}"
                 f"basada en el fragmento: {match['snippet']}"
             ),
             recommendation="Revisar si la versión vigente debe actualizarse y si corresponde recapacitación.",

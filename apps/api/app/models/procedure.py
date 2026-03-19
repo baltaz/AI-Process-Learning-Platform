@@ -63,6 +63,7 @@ class ProcedureVersion(Base):
     chunks = relationship("ProcedureVersionChunk", back_populates="procedure_version", lazy="selectin")
     frames = relationship("VideoFrame", back_populates="procedure_version", lazy="selectin")
     semantic_segments = relationship("SemanticSegment", back_populates="procedure_version", lazy="selectin")
+    step_indexes = relationship("ProcedureStepIndex", back_populates="procedure_version", lazy="selectin")
     source_structure = relationship(
         "ProcedureVersionStructure",
         back_populates="procedure_version",
@@ -116,6 +117,45 @@ class ProcedureVersionStructure(Base):
     structure_json: Mapped[dict] = mapped_column(JSONB)
 
     procedure_version = relationship("ProcedureVersion", back_populates="source_structure", lazy="selectin")
+
+
+class ProcedureSourcePreview(Base):
+    __tablename__ = "procedure_source_previews"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    storage_key: Mapped[str] = mapped_column(String(1000), nullable=False, index=True)
+    source_asset_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    source_mime: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    source_size: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    transcript_segments_json: Mapped[list[dict]] = mapped_column(JSONB)
+    raw_transcript: Mapped[str] = mapped_column(Text)
+    frames_json: Mapped[list[dict]] = mapped_column(JSONB)
+    segments_json: Mapped[list[dict]] = mapped_column(JSONB)
+    structure_json: Mapped[dict] = mapped_column(JSONB)
+    created_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
+class ProcedureStepIndex(Base):
+    __tablename__ = "procedure_step_index"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    procedure_version_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("procedure_versions.id", ondelete="CASCADE"),
+        index=True,
+    )
+    step_index: Mapped[int] = mapped_column(Integer)
+    title: Mapped[str] = mapped_column(String(500))
+    description: Mapped[str] = mapped_column(Text)
+    reference_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    origin: Mapped[str] = mapped_column(String(50), default="auto")
+    search_text: Mapped[str] = mapped_column(Text)
+    embedding = mapped_column(Vector(3072), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    procedure_version = relationship("ProcedureVersion", back_populates="step_indexes", lazy="selectin")
 
 
 class TaskProcedureLink(Base):

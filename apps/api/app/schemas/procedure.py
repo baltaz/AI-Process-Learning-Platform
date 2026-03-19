@@ -2,6 +2,7 @@ import uuid
 from datetime import date, datetime
 
 from pydantic import BaseModel, Field
+
 from app.schemas.generated_content import GeneratedTrainingStructure
 
 
@@ -26,6 +27,20 @@ class ProcedureVersionCreate(BaseModel):
     content_json: dict | None = None
     content_text: str = Field(min_length=1)
     status: str = "draft"
+    source_asset: ProcedureVersionSourceAssetWrite | None = None
+    source_preview_id: uuid.UUID | None = None
+    recalculate_compliance: bool = False
+
+
+class ProcedureVersionUpdate(BaseModel):
+    change_summary: str | None = None
+    change_reason: str | None = None
+    effective_from: date | None = None
+    content_json: dict | None = None
+    content_text: str = Field(min_length=1)
+    status: str | None = None
+    source_asset: ProcedureVersionSourceAssetWrite | None = None
+    source_preview_id: uuid.UUID | None = None
 
 
 class TaskProcedureLinkCreate(BaseModel):
@@ -37,6 +52,17 @@ class TaskProcedureLinkCreate(BaseModel):
 class ProcedureVersionSourceResultOut(BaseModel):
     structure: GeneratedTrainingStructure
     transcript_raw: str = Field(min_length=1)
+
+
+class ProcedureSourcePreviewRequest(BaseModel):
+    source_asset: ProcedureVersionSourceAssetWrite
+
+
+class ProcedureSourcePreviewOut(BaseModel):
+    preview_id: uuid.UUID
+    source_result: ProcedureVersionSourceResultOut
+    suggested_content_json: dict
+    suggested_content_text: str = Field(min_length=1)
 
 
 class ProcedureVersionOut(BaseModel):
@@ -86,10 +112,29 @@ class ProcedureRoleRef(BaseModel):
     is_required: bool
 
 
+class ProcedureIncidentSignalOut(BaseModel):
+    incident_id: uuid.UUID
+    incident_status: str
+    incident_severity: str
+    incident_description: str
+    incident_location: str | None = None
+    incident_created_at: datetime
+    analysis_run_id: uuid.UUID
+    analysis_summary: str | None = None
+    resolution_summary: str | None = None
+    finding_id: uuid.UUID
+    finding_type: str
+    finding_status: str
+    confidence: float | None = None
+    reasoning_summary: str | None = None
+    recommended_action: str | None = None
+
+
 class ProcedureDetailOut(ProcedureOut):
     versions: list[ProcedureVersionOut] = []
     linked_tasks: list[dict] = []
     roles: list[ProcedureRoleRef] = []
+    incident_signals: list[ProcedureIncidentSignalOut] = []
 
 
 class TaskProcedureLinkOut(BaseModel):

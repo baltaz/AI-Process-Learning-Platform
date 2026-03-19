@@ -125,8 +125,6 @@ async def _load_source_processing_data(db: AsyncSession, procedure_version_id: u
         select(VideoFrame).where(VideoFrame.procedure_version_id == procedure_version_id).order_by(VideoFrame.timestamp)
     )
     frames = r.scalars().all()
-    if not frames:
-        return None
     frames_data = [
         {"timestamp": f.timestamp, "caption": f.caption or "", "storage_key": f.storage_key, "local_path": None}
         for f in frames
@@ -200,6 +198,205 @@ def _validate_structure_for_persistence(structure: dict) -> dict:
         raise ValueError(f"Generated training structure did not match expected schema: {exc}") from exc
 
 
+def build_procedure_content_text(structure: dict) -> str:
+    title = str(structure.get("title") or "Procedimiento").strip()
+    objectives = [str(item).strip() for item in structure.get("objectives", []) if str(item).strip()]
+    steps = structure.get("steps", []) or []
+    critical_points = structure.get("critical_points", []) or []
+
+    lines = [title]
+    if objectives:
+        lines.append("")
+        lines.append("Objetivos:")
+        lines.extend(f"- {objective}" for objective in objectives)
+    if steps:
+        lines.append("")
+        lines.append("Pasos:")
+        for index, step in enumerate(steps, start=1):
+            step_title = str(step.get("title") or step.get("step") or f"Paso {index}").strip()
+            step_description = str(step.get("description") or "").strip()
+            if step_description:
+                lines.append(f"{index}. {step_title}: {step_description}")
+            else:
+                lines.append(f"{index}. {step_title}")
+    if critical_points:
+        lines.append("")
+        lines.append("Puntos criticos:")
+        for point in critical_points:
+            point_text = str(point.get("text") or point.get("point") or "").strip()
+            point_why = str(point.get("why") or "").strip()
+            if point_text and point_why:
+                lines.append(f"- {point_text}: {point_why}")
+            elif point_text:
+                lines.append(f"- {point_text}")
+    return "\n".join(lines).strip()
+
+
+def _normalize_authored_structure(structure: dict | None) -> dict | None:
+    if not structure:
+        return None
+    try:
+        return validate_training_structure(structure)
+    except ValidationError:
+        return None
+
+
+def _build_source_processing_artifacts(
+    transcript_segments: list[dict],
+    raw_transcript: str,
+    frames_data: list[dict],
+    segments: list[dict],
+    structure: dict,
+) -> dict:
+    return {
+        "transcript_segments": transcript_segments,
+        "raw_transcript": raw_transcript,
+        "frames_data": frames_data,
+        "segments": segments,
+        "structure": structure,
+    }
+
+
+async def clear_source_processing_result(db: AsyncSession, procedure_version_id: uuid.UUID):
+    await db.execute(delete(VideoFrame).where(VideoFrame.procedure_version_id == procedure_version_id))
+    await db.execute(delete(SemanticSegment).where(SemanticSegment.procedure_version_id == procedure_version_id))
+    await db.execute(delete(ProcedureVersionChunk).where(ProcedureVersionChunk.procedure_version_id == procedure_version_id))
+    await db.execute(
+        delete(ProcedureVersionTranscript).where(ProcedureVersionTranscript.procedure_version_id == procedure_version_id)
+    )
+    await db.execute(
+        delete(ProcedureVersionStructure).where(ProcedureVersionStructure.procedure_version_id == procedure_version_id)
+    )
+    await db.flush()
+
+
+async def persist_source_processing_result(
+    db: AsyncSession,
+    version: ProcedureVersion,
+    artifacts: dict,
+    *,
+    upload_frame_assets: bool,
+):
+    provider = get_ai_provider()
+    transcript_segments = artifacts.get("transcript_segments", [])
+    raw_transcript = str(artifacts.get("raw_transcript") or "")
+    frames_data = artifacts.get("frames_data", [])
+    segments = artifacts.get("segments", [])
+    structure = _validate_structure_for_persistence(dict(artifacts.get("structure") or {}))
+
+    await clear_source_processing_result(db, version.id)
+
+    db.add(
+        ProcedureVersionTranscript(
+            procedure_version_id=version.id,
+            transcript_raw=raw_transcript,
+            language="auto",
+        )
+    )
+    for index, seg in enumerate(transcript_segments):
+        db.add(
+            ProcedureVersionChunk(
+                procedure_version_id=version.id,
+                chunk_index=index,
+                text=seg["text"],
+                start_time=seg["start"],
+                end_time=seg["end"],
+            )
+        )
+
+    if upload_frame_assets:
+        for frame_data in frames_data:
+            local_path = frame_data.get("local_path")
+            storage_key = frame_data.get("storage_key")
+            if not local_path or not storage_key:
+                continue
+            await upload_file(local_path, storage_key)
+            db.add(
+                VideoFrame(
+                    procedure_version_id=version.id,
+                    timestamp=frame_data["timestamp"],
+                    storage_key=storage_key,
+                    caption=frame_data.get("caption"),
+                )
+            )
+
+    set_ai_usage_context(stage="INDEXING")
+    for seg in segments:
+        db.add(
+            SemanticSegment(
+                procedure_version_id=version.id,
+                start_time=seg["start"],
+                end_time=seg["end"],
+                text_fused=seg["text_fused"],
+                embedding=await provider.embed_text(seg["text_fused"]),
+            )
+        )
+
+    db.add(
+        ProcedureVersionStructure(
+            procedure_version_id=version.id,
+            structure_json=structure,
+        )
+    )
+
+    embedding_text = "\n".join(
+        part
+        for part in [
+            version.content_text or "",
+            raw_transcript[:4000],
+            json.dumps(structure, ensure_ascii=False)[:4000],
+        ]
+        if part
+    )
+    if embedding_text.strip():
+        version.embedding = await provider.embed_text(embedding_text)
+    version.source_processing_status = "READY"
+    version.source_processing_error = None
+    version.source_processed_at = datetime.now(timezone.utc)
+    await db.flush()
+
+
+async def _process_source_video(
+    provider: AIProvider,
+    video_path: str,
+    tmpdir: str,
+    frame_scope_id: uuid.UUID,
+) -> dict:
+    set_ai_usage_context(stage="TRANSCRIBING")
+    transcript_segments = await _stage_transcribe(provider, video_path)
+    raw_transcript = " ".join(s["text"] for s in transcript_segments)
+
+    set_ai_usage_context(stage="CHUNKING")
+    frames_data = await _stage_frame_sampling(provider, video_path, tmpdir, frame_scope_id)
+
+    segments = _stage_build_segments(transcript_segments, frames_data)
+    set_ai_usage_context(stage="EXTRACTING")
+    structure = _validate_structure_for_persistence(await _stage_extract_knowledge(provider, segments))
+    return _build_source_processing_artifacts(
+        transcript_segments=transcript_segments,
+        raw_transcript=raw_transcript,
+        frames_data=frames_data,
+        segments=segments,
+        structure=structure,
+    )
+
+
+async def process_source_preview(storage_key: str) -> dict:
+    provider = get_ai_provider()
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            video_path = os.path.join(tmpdir, "video.mp4")
+            await download_file(storage_key, video_path)
+            return await _process_source_video(
+                provider,
+                video_path,
+                tmpdir,
+                uuid.uuid4(),
+            )
+    finally:
+        clear_ai_usage_context()
+
+
 async def run_source_processing(procedure_version_id: uuid.UUID):
     async with async_session() as db:
         try:
@@ -222,104 +419,9 @@ async def run_source_processing(procedure_version_id: uuid.UUID):
                 video_path = os.path.join(tmpdir, "video.mp4")
                 await download_file(version.source_storage_key, video_path)
 
-                await db.execute(delete(VideoFrame).where(VideoFrame.procedure_version_id == procedure_version_id))
-                await db.execute(delete(SemanticSegment).where(SemanticSegment.procedure_version_id == procedure_version_id))
-                await db.execute(
-                    delete(ProcedureVersionChunk).where(
-                        ProcedureVersionChunk.procedure_version_id == procedure_version_id
-                    )
-                )
-                await db.execute(
-                    delete(ProcedureVersionTranscript).where(
-                        ProcedureVersionTranscript.procedure_version_id == procedure_version_id
-                    )
-                )
-                await db.execute(
-                    delete(ProcedureVersionStructure).where(
-                        ProcedureVersionStructure.procedure_version_id == procedure_version_id
-                    )
-                )
-                await db.commit()
-
-                set_ai_usage_context(stage="TRANSCRIBING")
-                transcript_segments = await _stage_transcribe(provider, video_path)
-                raw_transcript = " ".join(s["text"] for s in transcript_segments)
-
-                db.add(
-                    ProcedureVersionTranscript(
-                        procedure_version_id=procedure_version_id,
-                        transcript_raw=raw_transcript,
-                        language="auto",
-                    )
-                )
-
-                for i, seg in enumerate(transcript_segments):
-                    db.add(
-                        ProcedureVersionChunk(
-                            procedure_version_id=procedure_version_id,
-                            chunk_index=i,
-                            text=seg["text"],
-                            start_time=seg["start"],
-                            end_time=seg["end"],
-                        )
-                    )
-                await db.commit()
-                await _update_source_processing_status(db, procedure_version_id, "CHUNKING")
-
-                set_ai_usage_context(stage="CHUNKING")
-                frames_data = await _stage_frame_sampling(provider, video_path, tmpdir, procedure_version_id)
-                for fd in frames_data:
-                    db.add(
-                        VideoFrame(
-                            procedure_version_id=procedure_version_id,
-                            timestamp=fd["timestamp"],
-                            storage_key=fd["storage_key"],
-                            caption=fd["caption"],
-                        )
-                    )
-                    await upload_file(fd["local_path"], fd["storage_key"])
-                await db.commit()
+                artifacts = await _process_source_video(provider, video_path, tmpdir, procedure_version_id)
                 await _update_source_processing_status(db, procedure_version_id, "INDEXING")
-
-                segments = _stage_build_segments(transcript_segments, frames_data)
-                set_ai_usage_context(stage="INDEXING")
-                for seg in segments:
-                    emb = await provider.embed_text(seg["text_fused"])
-                    db.add(
-                        SemanticSegment(
-                            procedure_version_id=procedure_version_id,
-                            start_time=seg["start"],
-                            end_time=seg["end"],
-                            text_fused=seg["text_fused"],
-                            embedding=emb,
-                        )
-                    )
-                await db.commit()
-
-                await _update_source_processing_status(db, procedure_version_id, "EXTRACTING")
-                set_ai_usage_context(stage="EXTRACTING")
-                structure = _validate_structure_for_persistence(await _stage_extract_knowledge(provider, segments))
-                db.add(
-                    ProcedureVersionStructure(
-                        procedure_version_id=procedure_version_id,
-                        structure_json=structure,
-                    )
-                )
-
-                embedding_text = "\n".join(
-                    part
-                    for part in [
-                        version.content_text or "",
-                        raw_transcript[:4000],
-                        json.dumps(structure, ensure_ascii=False)[:4000],
-                    ]
-                    if part
-                )
-                if embedding_text.strip():
-                    version.embedding = await provider.embed_text(embedding_text)
-                version.source_processing_status = "READY"
-                version.source_processing_error = None
-                version.source_processed_at = datetime.now(timezone.utc)
+                await persist_source_processing_result(db, version, artifacts, upload_frame_assets=True)
                 await db.commit()
 
         except AIProviderError as e:
@@ -367,6 +469,7 @@ async def run_training_generation(training_id: uuid.UUID, job_id: uuid.UUID, ins
 
             _transcript_segments, _frames_data, segments, raw_transcript, source_structure = loaded
             existing_quiz = await _load_existing_quiz_context(db, training_id)
+            authored_structure = _normalize_authored_structure(training.procedure_version.content_json)
 
             if instruction is None:
                 await db.execute(delete(TrainingStructure).where(TrainingStructure.training_id == training_id))
@@ -378,7 +481,7 @@ async def run_training_generation(training_id: uuid.UUID, job_id: uuid.UUID, ins
                 select(TrainingStructure).where(TrainingStructure.training_id == training_id)
             )
             existing_structure = existing_structure_row.scalar_one_or_none()
-            base_structure = existing_structure.structure_json if existing_structure else source_structure
+            base_structure = existing_structure.structure_json if existing_structure else (authored_structure or source_structure)
 
             if instruction is not None:
                 set_ai_usage_context(stage="EXTRACTING")

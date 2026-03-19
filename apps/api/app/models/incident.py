@@ -15,10 +15,13 @@ class Incident(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     description: Mapped[str] = mapped_column(Text)
     severity: Mapped[str] = mapped_column(String(50), default="medium")
+    status: Mapped[str] = mapped_column(String(50), default="open")
     role_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("roles.id"), nullable=True)
     location: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    closed_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     embedding = mapped_column(Vector(3072), nullable=True)
 
     analysis_runs = relationship("IncidentAnalysisRun", back_populates="incident", lazy="selectin")

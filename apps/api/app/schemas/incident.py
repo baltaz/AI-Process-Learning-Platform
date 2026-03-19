@@ -12,9 +12,13 @@ class IncidentCreate(BaseModel):
     location: str | None = None
 
 
+IncidentStatus = Literal["open", "closed"]
+
+
 class IncidentUpdate(BaseModel):
     description: str | None = None
     severity: str | None = None
+    status: IncidentStatus | None = None
     role_id: uuid.UUID | None = None
     location: str | None = None
 
@@ -23,12 +27,15 @@ class IncidentOut(BaseModel):
     id: uuid.UUID
     description: str
     severity: str
+    status: IncidentStatus
     role_id: uuid.UUID | None
     role_name: str | None = None
     role_code: str | None = None
     location: str | None
     created_by: uuid.UUID
     created_at: datetime
+    closed_by: uuid.UUID | None = None
+    closed_at: datetime | None = None
 
     model_config = {"from_attributes": True}
 

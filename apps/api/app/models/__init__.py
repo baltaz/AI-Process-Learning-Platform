@@ -7,6 +7,8 @@ from app.models.task import Task, TaskTrainingLink
 from app.models.role import Role, UserRoleAssignment, RoleTaskLink
 from app.models.procedure import (
     Procedure,
+    ProcedureSourcePreview,
+    ProcedureStepIndex,
     ProcedureVersion,
     ProcedureVersionChunk,
     ProcedureVersionStructure,
@@ -34,6 +36,8 @@ __all__ = [
     "Assignment",
     "Role", "UserRoleAssignment", "RoleTaskLink",
     "Procedure",
+    "ProcedureSourcePreview",
+    "ProcedureStepIndex",
     "ProcedureVersion",
     "ProcedureVersionTranscript",
     "ProcedureVersionChunk",

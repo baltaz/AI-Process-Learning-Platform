@@ -3,6 +3,16 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 
+def _coerce_text(value) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (int, float)):
+        return str(value)
+    return str(value)
+
+
 class StructureEvidence(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -36,7 +46,10 @@ class StructureStep(BaseModel):
 
     @field_validator("title", "description")
     @classmethod
-    def _strip_text(cls, value: str) -> str:
+    def _strip_text(cls, value) -> str:
+        value = _coerce_text(value)
+        if value is None:
+            raise ValueError("text cannot be empty")
         value = value.strip()
         if not value:
             raise ValueError("text cannot be empty")
@@ -51,9 +64,19 @@ class StructureStep(BaseModel):
         segment_ref = value.get("segment_ref")
         if evidence is None and segment_ref is not None:
             evidence = {"segment_range": segment_ref}
+        raw_title = value.get("title")
+        raw_step = value.get("step")
+        title = _coerce_text(raw_title)
+        if title is None or not title.strip():
+            normalized_step = _coerce_text(raw_step)
+            if normalized_step is not None and normalized_step.strip():
+                if normalized_step.strip().isdigit():
+                    title = f"Paso {normalized_step.strip()}"
+                else:
+                    title = normalized_step
         return {
-            "title": value.get("title") or value.get("step"),
-            "description": value.get("description"),
+            "title": title,
+            "description": _coerce_text(value.get("description")),
             "evidence": evidence,
         }
 
@@ -67,7 +90,10 @@ class CriticalPoint(BaseModel):
 
     @field_validator("text", "why")
     @classmethod
-    def _strip_text(cls, value: str) -> str:
+    def _strip_text(cls, value) -> str:
+        value = _coerce_text(value)
+        if value is None:
+            raise ValueError("text cannot be empty")
         value = value.strip()
         if not value:
             raise ValueError("text cannot be empty")
@@ -83,8 +109,8 @@ class CriticalPoint(BaseModel):
         if evidence is None and segment_ref is not None:
             evidence = {"segment_range": segment_ref}
         return {
-            "text": value.get("text") or value.get("point"),
-            "why": value.get("why"),
+            "text": _coerce_text(value.get("text") or value.get("point")),
+            "why": _coerce_text(value.get("why")),
             "evidence": evidence,
         }
 
@@ -99,7 +125,10 @@ class GeneratedTrainingStructure(BaseModel):
 
     @field_validator("title")
     @classmethod
-    def _strip_title(cls, value: str) -> str:
+    def _strip_title(cls, value) -> str:
+        value = _coerce_text(value)
+        if value is None:
+            raise ValueError("title cannot be empty")
         value = value.strip()
         if not value:
             raise ValueError("title cannot be empty")
@@ -110,8 +139,9 @@ class GeneratedTrainingStructure(BaseModel):
     def _validate_objectives(cls, values: list[str]) -> list[str]:
         normalized = []
         for value in values:
-            if not isinstance(value, str):
-                raise ValueError("all objectives must be strings")
+            value = _coerce_text(value)
+            if value is None:
+                raise ValueError("objective cannot be empty")
             value = value.strip()
             if not value:
                 raise ValueError("objective cannot be empty")
