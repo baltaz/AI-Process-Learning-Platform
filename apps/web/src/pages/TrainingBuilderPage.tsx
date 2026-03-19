@@ -420,9 +420,12 @@ export default function TrainingBuilderPage() {
                     <ol className="space-y-3">
                       {structure.structure_json.steps.map((step, i) => (
                         <li key={i} className="rounded-lg border border-gray-100 bg-gray-50 p-4">
-                          <p className="text-sm font-medium text-gray-800">
-                            {i + 1}. {getStepTitle(step as Record<string, unknown>)}
-                          </p>
+                          <div className="flex flex-wrap items-start justify-between gap-2">
+                            <p className="text-sm font-medium text-gray-800">
+                              {i + 1}. {getStepTitle(step as Record<string, unknown>)}
+                            </p>
+                            <EvidencePill evidence={step.evidence} />
+                          </div>
                           <p className="mt-1 text-sm text-gray-600">
                             {getStepDescription(step as Record<string, unknown>)}
                           </p>
@@ -641,7 +644,7 @@ function JobProgress({ job }: { job?: Job | null }) {
 }
 
 function EvidenceBadge({ evidence }: { evidence: Evidence }) {
-  if (!evidence.quote && !evidence.start_time && !evidence.segment_range) return null;
+  if (!evidence.quote) return null;
   return (
     <div className="mt-2 flex items-start gap-2 rounded-md border border-indigo-100 bg-indigo-50/50 px-3 py-2">
       <Quote className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-indigo-400" />
@@ -649,15 +652,20 @@ function EvidenceBadge({ evidence }: { evidence: Evidence }) {
         {evidence.quote && (
           <p className="italic text-indigo-700">&ldquo;{evidence.quote}&rdquo;</p>
         )}
-        {(evidence.start_time || evidence.segment_range) && (
-          <p className="mt-0.5 flex items-center gap-1 text-indigo-500">
-            <Clock className="h-3 w-3" />
-            {evidence.segment_range ?? evidence.start_time}
-            {!evidence.segment_range && evidence.end_time ? ` – ${evidence.end_time}` : ""}
-          </p>
-        )}
       </div>
     </div>
+  );
+}
+
+function EvidencePill({ evidence }: { evidence?: Evidence | null }) {
+  if (!evidence?.segment_range && !evidence?.start_time) return null;
+
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-white px-2.5 py-1 text-xs text-gray-500">
+      <Clock className="h-3 w-3" />
+      {evidence.segment_range ?? evidence.start_time}
+      {!evidence.segment_range && evidence.end_time ? ` – ${evidence.end_time}` : ""}
+    </span>
   );
 }
 

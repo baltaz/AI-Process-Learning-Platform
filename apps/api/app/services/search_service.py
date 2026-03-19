@@ -1,9 +1,10 @@
 from sqlalchemy import and_, func, select
+from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
-from app.models.procedure import ProcedureStepIndex, ProcedureVersion
+from app.models.procedure import Procedure, ProcedureStepIndex, ProcedureVersion
 from app.models.semantic_segment import SemanticSegment
+from app.models.training import Training
 from app.schemas.search import SearchResult
 from app.services.embedding_service import get_embedding
 
@@ -92,7 +93,12 @@ async def rank_procedure_versions_by_embedding(
         .order_by("distance")
         .limit(limit * 5)
     )
-    step_rows = (await db.execute(step_stmt)).all()
+    try:
+        step_rows = (await db.execute(step_stmt)).all()
+    except ProgrammingError:
+        # Some local environments may not have the optional step index table yet.
+        # In that case, keep the analysis available using semantic segments only.
+        step_rows = []
     for index, row in enumerate(step_rows):
         score = round(1 - float(row.distance or 1), 4)
         if score < min_score:
@@ -142,33 +148,39 @@ async def rank_procedure_versions_by_embedding(
     ordered_version_ids = [item["match"]["procedure_version_id"] for item in ranked_matches]
     match_by_version_id = {item["match"]["procedure_version_id"]: item["match"] for item in ranked_matches}
 
-    versions = (
+    version_rows = (
         await db.execute(
-            select(ProcedureVersion)
-            .where(ProcedureVersion.id.in_(ordered_version_ids))
-            .options(
-                selectinload(ProcedureVersion.procedure),
-                selectinload(ProcedureVersion.training),
+            select(
+                ProcedureVersion.id,
+                ProcedureVersion.procedure_id,
+                ProcedureVersion.version_number,
+                Procedure.code,
+                Procedure.title,
+                Training.id.label("training_id"),
+                Training.title.label("training_title"),
             )
+            .join(Procedure, Procedure.id == ProcedureVersion.procedure_id)
+            .outerjoin(Training, Training.procedure_version_id == ProcedureVersion.id)
+            .where(ProcedureVersion.id.in_(ordered_version_ids))
         )
-    ).scalars().all()
-    version_by_id = {version.id: version for version in versions}
+    ).all()
+    version_by_id = {row.id: row for row in version_rows}
 
     results: list[dict] = []
     for version_id in ordered_version_ids:
         version = version_by_id.get(version_id)
-        if version is None or version.procedure is None:
+        if version is None:
             continue
         match = match_by_version_id[version_id]
         results.append(
             {
                 **match,
                 "procedure_id": version.procedure_id,
-                "procedure_code": version.procedure.code,
-                "procedure_title": version.procedure.title,
+                "procedure_code": version.code,
+                "procedure_title": version.title,
                 "version_number": version.version_number,
-                "training_id": version.training.id if version.training else None,
-                "training_title": version.training.title if version.training else None,
+                "training_id": version.training_id,
+                "training_title": version.training_title,
             }
         )
     return results

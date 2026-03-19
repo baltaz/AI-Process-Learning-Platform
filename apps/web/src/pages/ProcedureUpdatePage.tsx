@@ -497,9 +497,9 @@ export default function ProcedureUpdatePage() {
         className="space-y-6"
       >
         <section className="rounded-3xl border border-gray-200 bg-white p-6">
-          <div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
+          <h2 className="text-lg font-semibold text-gray-900">Detalle de la actualización</h2>
+          <div className="mt-4 grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
             <div className="space-y-4">
-              <h2 className="text-lg font-semibold text-gray-900">Detalle de la actualización</h2>
               <label className="block">
                 <span className="mb-1.5 block text-sm font-medium text-gray-700">Resumen de la actualización</span>
                 <input

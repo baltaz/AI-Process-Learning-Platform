@@ -1,4 +1,4 @@
-# ProcedureOps MVP
+# Mento
 
 Plataforma para gestionar procedimientos versionados y generar trainings derivados con IA a partir de videos operativos cortos (\<= 5 min). `Procedure` define el concepto, `ProcedureVersion` concentra el contenido, el video y la inteligencia de fuente (transcript, chunks, frames, embeddings y estructura canónica), y `Training` queda como artefacto derivado 1 a 1 para despliegue y evaluación pedagógica.
 

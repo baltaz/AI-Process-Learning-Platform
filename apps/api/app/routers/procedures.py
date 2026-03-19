@@ -25,6 +25,7 @@ from app.schemas.procedure import (
     ProcedureOut,
     ProcedureSourcePreviewOut,
     ProcedureSourcePreviewRequest,
+    ProcedureUpdate,
     ProcedureIncidentSignalOut,
     ProcedureVersionCreate,
     ProcedureVersionSourceAssetWrite,
@@ -273,9 +274,31 @@ async def _get_open_incident_signals_for_procedure(
 @router.get("", response_model=list[ProcedureOut])
 async def list_procedures(db: AsyncSession = Depends(get_db)):
     procedures = list((await db.execute(select(Procedure).order_by(Procedure.updated_at.desc()))).scalars().all())
+    procedure_ids_with_open_incidents = set(
+        (
+            await db.execute(
+                select(ProcedureVersion.procedure_id)
+                .join(IncidentAnalysisFinding, IncidentAnalysisFinding.procedure_version_id == ProcedureVersion.id)
+                .join(IncidentAnalysisRun, IncidentAnalysisFinding.analysis_run_id == IncidentAnalysisRun.id)
+                .join(Incident, IncidentAnalysisRun.incident_id == Incident.id)
+                .where(
+                    Incident.status == "open",
+                    IncidentAnalysisRun.source == "manual",
+                )
+                .distinct()
+            )
+        )
+        .scalars()
+        .all()
+    )
     output: list[ProcedureOut] = []
     for procedure in procedures:
-        output.append(_to_procedure_out(procedure, await get_latest_procedure_version(db, procedure.id)))
+        output.append(
+            _to_procedure_out(
+                procedure,
+                await get_latest_procedure_version(db, procedure.id),
+            ).model_copy(update={"requires_update": procedure.id in procedure_ids_with_open_incidents})
+        )
     return output
 
 
@@ -348,6 +371,34 @@ async def create_procedure(
         asyncio.create_task(run_source_processing(version.id))
 
     return _to_procedure_out(procedure, version)
+
+
+@router.patch("/{procedure_id}", response_model=ProcedureOut)
+async def update_procedure(
+    procedure_id: uuid.UUID,
+    payload: ProcedureUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    procedure = (await db.execute(select(Procedure).where(Procedure.id == procedure_id))).scalar_one_or_none()
+    if procedure is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Procedure not found")
+
+    changes = payload.model_dump(exclude_unset=True)
+    if "owner_role_id" in changes and changes["owner_role_id"] is not None:
+        role = (await db.execute(select(Role).where(Role.id == changes["owner_role_id"]))).scalar_one_or_none()
+        if role is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Owner role not found")
+
+    for field, value in changes.items():
+        setattr(procedure, field, value)
+
+    await db.commit()
+    procedure = (
+        await db.execute(select(Procedure).where(Procedure.id == procedure_id).options(selectinload(Procedure.owner_role)))
+    ).scalar_one()
+    latest_version = await get_latest_procedure_version(db, procedure.id)
+    return _to_procedure_out(procedure, latest_version)
 
 
 @router.post("/source-preview", response_model=ProcedureSourcePreviewOut)

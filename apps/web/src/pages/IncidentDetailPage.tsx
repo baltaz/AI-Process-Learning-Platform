@@ -6,6 +6,8 @@ import {
   Check,
   ChevronsUpDown,
   Clock,
+  FileText,
+  GitBranch,
   Link as LinkIcon,
   Loader2,
   Pencil,
@@ -170,7 +172,7 @@ const statusLabel: Record<IncidentRecord["status"], string> = {
 
 const findingTypeLabels: Record<FindingType, string> = {
   not_followed: "No respetado",
-  needs_redefinition: "Debe redefinirse",
+  needs_redefinition: "Requiere actualización",
   missing_procedure: "Falta procedimiento",
   contributing_factor: "Factor contribuyente",
 };
@@ -355,6 +357,7 @@ export default function IncidentDetailPage() {
   const queryClient = useQueryClient();
   const [form, setForm] = useState(emptyForm);
   const [error, setError] = useState("");
+  const [isEditingIncident, setIsEditingIncident] = useState(isCreating);
   const [analysisDraft, setAnalysisDraft] = useState<AnalysisDraft>(emptyAnalysisDraft());
   const [analysisPreview, setAnalysisPreview] = useState<IncidentAnalysisPreview | null>(null);
 
@@ -431,6 +434,7 @@ export default function IncidentDetailPage() {
       queryClient.invalidateQueries({ queryKey: ["incidents"] });
       queryClient.invalidateQueries({ queryKey: ["incident", id] });
       setError("");
+      setIsEditingIncident(false);
     },
     onError: (mutationError) => {
       setError(getErrorMessage(mutationError, "No se pudo actualizar la incidencia."));
@@ -573,13 +577,36 @@ export default function IncidentDetailPage() {
   return (
     <div className="mx-auto max-w-5xl space-y-6 pt-8">
       <div className="space-y-3">
-        <Link
-          to="/incidents"
-          className="inline-flex items-center gap-2 text-sm font-medium text-indigo-600 hover:text-indigo-700"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Volver a incidencias
-        </Link>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <Link
+            to="/incidents"
+            className="inline-flex items-center gap-2 text-sm font-medium text-indigo-600 hover:text-indigo-700"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Volver a incidencias
+          </Link>
+          {!isCreating && incident && (
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setIsEditingIncident((current) => !current)}
+                className="inline-flex items-center gap-2 text-sm font-medium text-gray-600 hover:text-gray-900"
+              >
+                <Pencil className="h-4 w-4" />
+                Editar
+              </button>
+              <button
+                type="button"
+                onClick={handleDelete}
+                disabled={deleteMutation.isPending}
+                className="inline-flex items-center gap-2 rounded-lg border border-red-200 px-4 py-2.5 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-60"
+              >
+                {deleteMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                Eliminar
+              </button>
+            </div>
+          )}
+        </div>
 
         <div className="rounded-3xl border border-gray-200 bg-white p-6">
           <div className="flex flex-wrap items-start justify-between gap-4">
@@ -589,10 +616,10 @@ export default function IncidentDetailPage() {
                 <h1 className="text-2xl font-bold text-gray-900">
                   {isCreating ? "Nueva incidencia" : "Detalle de incidencia"}
                 </h1>
-                <p className="mt-2 text-sm text-gray-600">
+                <p className="mt-2 whitespace-pre-wrap text-sm text-gray-600">
                   {isCreating
                     ? "Registrá un incidente nuevo con los datos base necesarios."
-                    : "Usa esta incidencia como disparador del análisis semántico y de los hallazgos sobre procedimientos."}
+                    : incident?.description || "Sin descripción cargada."}
                 </p>
                 {!isCreating && incident && (
                   <div className="mt-3 flex flex-wrap gap-2 text-xs">
@@ -619,114 +646,121 @@ export default function IncidentDetailPage() {
               </div>
             </div>
             {!isCreating && incident && (
-              <div className="flex min-w-[220px] flex-col items-stretch gap-3">
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div className="rounded-2xl bg-gray-50 px-4 py-3">
-                    <p className="text-xs uppercase tracking-wide text-gray-400">Hallazgos manuales</p>
-                    <p className="mt-1 text-lg font-semibold text-gray-900">{confirmedCount}</p>
-                  </div>
-                  <div className="rounded-2xl bg-gray-50 px-4 py-3">
-                    <p className="text-xs uppercase tracking-wide text-gray-400">Needs redefinition</p>
-                    <p className="mt-1 text-lg font-semibold text-gray-900">{needsRedefinitionCount}</p>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={handleDelete}
-                  disabled={deleteMutation.isPending}
-                  className="inline-flex items-center justify-center gap-2 rounded-lg border border-red-200 px-4 py-2.5 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-60"
-                >
-                  {deleteMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
-                  Eliminar incidencia
-                </button>
+              <div className="flex items-center gap-2 self-start text-sm text-gray-600">
+                <span className="group relative inline-flex items-center gap-2 rounded-full bg-gray-50 px-3 py-1.5 font-medium text-gray-600">
+                  <FileText className="h-4 w-4 text-gray-400" />
+                  {confirmedCount}
+                  <span className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-2 hidden w-36 -translate-x-1/2 rounded-lg bg-gray-900 px-2.5 py-1.5 text-center text-xs text-white shadow-lg group-hover:block">
+                    Hallazgos manuales
+                  </span>
+                </span>
+                <span className="group relative inline-flex items-center gap-2 rounded-full bg-gray-50 px-3 py-1.5 font-medium text-gray-600">
+                  <GitBranch className="h-4 w-4 text-gray-400" />
+                  {needsRedefinitionCount}
+                  <span className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-2 hidden w-44 -translate-x-1/2 rounded-lg bg-gray-900 px-2.5 py-1.5 text-center text-xs text-white shadow-lg group-hover:block">
+                    Procesos que requieren actualización
+                  </span>
+                </span>
               </div>
             )}
           </div>
         </div>
       </div>
 
-      <form onSubmit={handleSubmit} className="rounded-2xl border border-gray-200 bg-white p-6">
-        <div className="grid gap-4">
-          <label className="block">
-            <span className="mb-1 block text-sm font-medium text-gray-700">Descripción</span>
-            <textarea
-              required
-              rows={5}
-              value={form.description}
-              onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))}
-              className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm"
-              placeholder="Describe el incidente..."
-            />
-          </label>
-
-          <div className="grid gap-4 md:grid-cols-3">
+      {(isCreating || isEditingIncident) && (
+        <form onSubmit={handleSubmit} className="rounded-2xl border border-gray-200 bg-white p-6">
+          <div className="grid gap-4">
             <label className="block">
-              <span className="mb-1 block text-sm font-medium text-gray-700">Severidad</span>
-              <select
-                value={form.severity}
-                onChange={(event) => setForm((current) => ({ ...current, severity: event.target.value }))}
+              <span className="mb-1 block text-sm font-medium text-gray-700">Descripción</span>
+              <textarea
+                required
+                rows={5}
+                value={form.description}
+                onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))}
                 className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm"
-              >
-                <option value="low">Baja</option>
-                <option value="medium">Media</option>
-                <option value="high">Alta</option>
-                <option value="critical">Crítica</option>
-              </select>
-            </label>
-
-            <label className="block">
-              <span className="mb-1 block text-sm font-medium text-gray-700">Rol afectado</span>
-              <select
-                value={form.role_id}
-                onChange={(event) => setForm((current) => ({ ...current, role_id: event.target.value }))}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm"
-              >
-                <option value="">Sin rol</option>
-                {roles.map((role) => (
-                  <option key={role.id} value={role.id}>
-                    {role.code} · {role.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="block">
-              <span className="mb-1 block text-sm font-medium text-gray-700">Ubicación</span>
-              <input
-                value={form.location}
-                onChange={(event) => setForm((current) => ({ ...current, location: event.target.value }))}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm"
-                placeholder="Ej: Planta Norte"
+                placeholder="Describe el incidente..."
               />
             </label>
-          </div>
-        </div>
 
-        <div className="mt-6 flex items-center justify-end gap-3">
-          {error && <p className="mr-auto text-sm text-red-600">{error}</p>}
-          <Link
-            to="/incidents"
-            className="rounded-lg border border-gray-300 px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
-          >
-            Cancelar
-          </Link>
-          <button
-            type="submit"
-            disabled={isPending}
-            className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-60"
-          >
-            {isPending && <Loader2 className="h-4 w-4 animate-spin" />}
-            {isCreating ? "Crear incidencia" : "Guardar cambios"}
-          </button>
-        </div>
-      </form>
+            <div className="grid gap-4 md:grid-cols-3">
+              <label className="block">
+                <span className="mb-1 block text-sm font-medium text-gray-700">Severidad</span>
+                <select
+                  value={form.severity}
+                  onChange={(event) => setForm((current) => ({ ...current, severity: event.target.value }))}
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm"
+                >
+                  <option value="low">Baja</option>
+                  <option value="medium">Media</option>
+                  <option value="high">Alta</option>
+                  <option value="critical">Crítica</option>
+                </select>
+              </label>
+
+              <label className="block">
+                <span className="mb-1 block text-sm font-medium text-gray-700">Rol afectado</span>
+                <select
+                  value={form.role_id}
+                  onChange={(event) => setForm((current) => ({ ...current, role_id: event.target.value }))}
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm"
+                >
+                  <option value="">Sin rol</option>
+                  {roles.map((role) => (
+                    <option key={role.id} value={role.id}>
+                      {role.code} · {role.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="block">
+                <span className="mb-1 block text-sm font-medium text-gray-700">Ubicación</span>
+                <input
+                  value={form.location}
+                  onChange={(event) => setForm((current) => ({ ...current, location: event.target.value }))}
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm"
+                  placeholder="Ej: Planta Norte"
+                />
+              </label>
+            </div>
+          </div>
+
+          <div className="mt-6 flex items-center justify-end gap-3">
+            {error && <p className="mr-auto text-sm text-red-600">{error}</p>}
+            {isCreating ? (
+              <Link
+                to="/incidents"
+                className="rounded-lg border border-gray-300 px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                Cancelar
+              </Link>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setIsEditingIncident(false)}
+                className="rounded-lg border border-gray-300 px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                Cancelar
+              </button>
+            )}
+            <button
+              type="submit"
+              disabled={isPending}
+              className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-60"
+            >
+              {isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+              {isCreating ? "Crear incidencia" : "Guardar cambios"}
+            </button>
+          </div>
+        </form>
+      )}
 
       {!isCreating && incident && (
         <>
           <section className="rounded-2xl border border-gray-200 bg-white p-6">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
-                <h2 className="text-lg font-semibold text-gray-900">Acciones del análisis</h2>
+                <h2 className="text-lg font-semibold text-gray-900">Acciones de análisis</h2>
                 <p className="mt-1 text-sm text-gray-500">
                   Ejecuta una consulta exploratoria sobre procedimientos actuales y precedentes similares. La vinculación real se guarda sólo en el análisis manual.
                 </p>
@@ -757,89 +791,56 @@ export default function IncidentDetailPage() {
                 La incidencia está cerrada. Puedes seguir consultando el historial, pero no disparar nuevos análisis ni editar hallazgos.
               </div>
             )}
-          </section>
-
-          <section className="rounded-2xl border border-gray-200 bg-white p-6">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <h2 className="text-lg font-semibold text-gray-900">Preview semántico</h2>
-                <p className="mt-1 text-sm text-gray-500">
-                  Procedimientos actuales y análisis previos similares detectados a partir de la descripción guardada.
-                </p>
-              </div>
-            </div>
-            <div className="mt-5 space-y-3">
-              {analyzeMutation.isPending ? (
-                <div className="flex items-center gap-2 text-sm text-gray-400">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Buscando coincidencias semánticas...
+            {(analyzeMutation.isPending || analysisPreview) && (
+              <div className="mt-5 border-t border-gray-100 pt-5">
+                <div>
+                  <h3 className="text-base font-semibold text-gray-900">Resultados de análisis</h3>
+                  <p className="mt-1 text-sm text-gray-500">
+                    Procedimientos actuales y análisis previos similares detectados a partir de la descripción guardada.
+                  </p>
                 </div>
-              ) : analysisPreview ? (
-                <>
-                  {analysisPreview.procedure_matches.length ? (
-                    analysisPreview.procedure_matches.map((match) => (
-                  <div
-                    key={match.procedure_version_id ?? `${match.procedure_id}-${match.score}`}
-                    className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-4"
-                  >
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm font-medium text-gray-900">
-                          {match.procedure_code} · {match.procedure_title}
-                          {match.version_number != null ? ` · v${match.version_number}` : ""}
-                        </p>
-                        <p className="mt-1 text-xs text-gray-500">Relación: {(match.score * 100).toFixed(0)}%</p>
-                        {match.step_title && (
-                          <p className="mt-2 text-xs font-medium text-gray-500">
-                            Paso {match.step_index}: {match.step_title}
-                          </p>
-                        )}
-                        <p className="mt-2 text-sm text-gray-600">{match.snippet}</p>
-                        {match.reference_segment_range && (
-                          <p className="mt-2 text-xs text-gray-500">Referencia fuente: {match.reference_segment_range}</p>
-                        )}
-                        {match.training_title && (
-                          <p className="mt-2 text-xs text-gray-500">Training derivado disponible: {match.training_title}</p>
-                        )}
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        {match.procedure_id && (
-                          <Link
-                            to={`/procedures/${match.procedure_id}`}
-                            className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-white"
+                <div className="mt-5 space-y-3">
+                  {analyzeMutation.isPending ? (
+                    <div className="flex items-center gap-2 text-sm text-gray-400">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Buscando coincidencias semánticas...
+                    </div>
+                  ) : analysisPreview ? (
+                    <>
+                      {analysisPreview.procedure_matches.length ? (
+                        analysisPreview.procedure_matches.map((match) => (
+                          <div
+                            key={match.procedure_version_id ?? `${match.procedure_id}-${match.score}`}
+                            className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-4"
                           >
-                            Ver procedimiento
-                          </Link>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                    ))
-                  ) : (
-                    <div className="rounded-xl border border-dashed border-gray-200 px-4 py-5 text-sm text-gray-500">
-                      No se encontraron procedimientos actuales suficientemente relacionados.
-                    </div>
-                  )}
-
-                  <div className="pt-2">
-                    <h3 className="text-sm font-semibold text-gray-900">Análisis previos similares</h3>
-                    <div className="mt-3 space-y-3">
-                      {analysisPreview.similar_analyses.length ? (
-                        analysisPreview.similar_analyses.map((related) => (
-                          <div key={`${related.incident_id}-${related.analysis_run.id}`} className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-4">
                             <div className="flex flex-wrap items-start justify-between gap-3">
                               <div className="min-w-0 flex-1">
-                                <p className="text-sm font-medium text-gray-900">{related.description}</p>
-                                <p className="mt-1 text-xs text-gray-500">
-                                  Similitud: {(related.similarity_score * 100).toFixed(0)}%
+                                <p className="text-sm font-medium text-gray-900">
+                                  {match.procedure_code} · {match.procedure_title}
+                                  {match.version_number != null ? ` · v${match.version_number}` : ""}
                                 </p>
-                                {related.analysis_run.analysis_summary && (
-                                  <p className="mt-2 text-sm text-gray-600">{related.analysis_run.analysis_summary}</p>
-                                )}
-                                {related.analysis_run.resolution_summary && (
-                                  <p className="mt-1 text-xs text-gray-500">
-                                    Resolución previa: {related.analysis_run.resolution_summary}
+                                <p className="mt-1 text-xs text-gray-500">Relación: {(match.score * 100).toFixed(0)}%</p>
+                                {match.step_title && (
+                                  <p className="mt-2 text-xs font-medium text-gray-500">
+                                    Paso {match.step_index}: {match.step_title}
                                   </p>
+                                )}
+                                <p className="mt-2 text-sm text-gray-600">{match.snippet}</p>
+                                {match.reference_segment_range && (
+                                  <p className="mt-2 text-xs text-gray-500">Referencia fuente: {match.reference_segment_range}</p>
+                                )}
+                                {match.training_title && (
+                                  <p className="mt-2 text-xs text-gray-500">Training derivado disponible: {match.training_title}</p>
+                                )}
+                              </div>
+                              <div className="flex flex-wrap gap-2">
+                                {match.procedure_id && (
+                                  <Link
+                                    to={`/procedures/${match.procedure_id}`}
+                                    className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-white"
+                                  >
+                                    Ver procedimiento
+                                  </Link>
                                 )}
                               </div>
                             </div>
@@ -847,18 +848,46 @@ export default function IncidentDetailPage() {
                         ))
                       ) : (
                         <div className="rounded-xl border border-dashed border-gray-200 px-4 py-5 text-sm text-gray-500">
-                          No se encontraron análisis previos semánticamente similares.
+                          No se encontraron procedimientos actuales suficientemente relacionados.
                         </div>
                       )}
-                    </div>
-                  </div>
-                </>
-              ) : (
-                <p className="text-sm text-gray-500">
-                  Ejecuta el análisis para obtener un preview no persistente basado en la descripción guardada.
-                </p>
-              )}
-            </div>
+
+                      <div className="pt-2">
+                        <h4 className="text-sm font-semibold text-gray-900">Análisis previos similares</h4>
+                        <div className="mt-3 space-y-3">
+                          {analysisPreview.similar_analyses.length ? (
+                            analysisPreview.similar_analyses.map((related) => (
+                              <div key={`${related.incident_id}-${related.analysis_run.id}`} className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-4">
+                                <div className="flex flex-wrap items-start justify-between gap-3">
+                                  <div className="min-w-0 flex-1">
+                                    <p className="text-sm font-medium text-gray-900">{related.description}</p>
+                                    <p className="mt-1 text-xs text-gray-500">
+                                      Similitud: {(related.similarity_score * 100).toFixed(0)}%
+                                    </p>
+                                    {related.analysis_run.analysis_summary && (
+                                      <p className="mt-2 text-sm text-gray-600">{related.analysis_run.analysis_summary}</p>
+                                    )}
+                                    {related.analysis_run.resolution_summary && (
+                                      <p className="mt-1 text-xs text-gray-500">
+                                        Resolución previa: {related.analysis_run.resolution_summary}
+                                      </p>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            ))
+                          ) : (
+                            <div className="rounded-xl border border-dashed border-gray-200 px-4 py-5 text-sm text-gray-500">
+                              No se encontraron análisis previos semánticamente similares.
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </>
+                  ) : null}
+                </div>
+              </div>
+            )}
           </section>
 
           <section className="rounded-2xl border border-gray-200 bg-white p-6">

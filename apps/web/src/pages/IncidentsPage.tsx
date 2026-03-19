@@ -111,7 +111,7 @@ const severityLabels: Record<string, string> = {
 
 const findingTypeLabels: Record<FindingType, string> = {
   not_followed: "No respetado",
-  needs_redefinition: "Debe redefinirse",
+  needs_redefinition: "Requiere actualización",
   missing_procedure: "Falta procedimiento",
   contributing_factor: "Factor contribuyente",
 };

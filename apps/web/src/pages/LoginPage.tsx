@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { BookOpen, Loader2 } from "lucide-react";
+import { GitBranch, Loader2 } from "lucide-react";
 
 import { storeAuth, type DemoRole } from "@/lib/auth";
 import { demoRoleOptions, getHomePath } from "@/lib/demoAccess";
@@ -55,9 +55,9 @@ export default function LoginPage() {
       <div className="w-full max-w-md">
         <div className="mb-8 text-center">
           <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-indigo-600 shadow-lg shadow-indigo-200">
-            <BookOpen className="h-7 w-7 text-white" />
+            <GitBranch className="h-7 w-7 text-white" />
           </div>
-          <h1 className="mt-4 text-2xl font-bold text-gray-900">MiniTraining AI</h1>
+          <h1 className="mt-4 text-2xl font-bold text-gray-900">Mento</h1>
           <p className="mt-1 text-sm text-gray-500">
             {isRegister
               ? "Creá tu usuario y elegí el perfil visual de la demo"
@@ -163,11 +163,6 @@ export default function LoginPage() {
               })}
             </div>
           </fieldset>
-
-          <div className="mb-6 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-800">
-            El tipo de usuario en esta demo solo afecta la experiencia visual del frontend. El
-            backend autentica usuarios, pero no valida permisos segun el perfil elegido.
-          </div>
 
           <button
             type="submit"

@@ -58,7 +58,7 @@ export default function Layout() {
         <div className="flex h-16 items-center gap-2 border-b border-gray-200 px-6">
           <GitBranch className="h-6 w-6 text-indigo-600" />
           <div className="min-w-0">
-            <span className="block truncate text-lg font-bold text-gray-900">ProcedureOps</span>
+            <span className="block truncate text-lg font-bold text-gray-900">Mento</span>
             <span className="block text-xs font-medium uppercase tracking-wide text-indigo-600">
               Vista {roleLabels[role]}
             </span>

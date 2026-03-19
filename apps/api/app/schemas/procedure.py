@@ -20,6 +20,12 @@ class ProcedureCreate(BaseModel):
     source_asset: ProcedureVersionSourceAssetWrite | None = None
 
 
+class ProcedureUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=1)
+    description: str | None = None
+    owner_role_id: uuid.UUID | None = None
+
+
 class ProcedureVersionCreate(BaseModel):
     change_summary: str | None = None
     change_reason: str | None = None
@@ -102,6 +108,7 @@ class ProcedureOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     latest_version: ProcedureVersionOut | None = None
+    requires_update: bool = False
 
 
 class ProcedureRoleRef(BaseModel):

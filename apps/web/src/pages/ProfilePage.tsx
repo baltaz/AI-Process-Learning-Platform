@@ -1,14 +1,40 @@
+import { useQuery } from "@tanstack/react-query";
 import { BadgeCheck, Mail, MapPin, UserCircle2 } from "lucide-react";
 
 import { getStoredUser } from "@/lib/auth";
 import { roleLabels } from "@/lib/demoAccess";
+import api from "@/services/api";
+
+interface UserRoleAssignment {
+  id: string;
+  status: string;
+  role: {
+    id: string;
+    name: string;
+  };
+}
+
+interface ProfileUser {
+  id: string;
+  role_assignments: UserRoleAssignment[];
+}
 
 export default function ProfilePage() {
   const user = getStoredUser();
+  const { data: profileUser } = useQuery<ProfileUser>({
+    queryKey: ["profile-user", user?.id],
+    queryFn: () => api.get(`/users/${user?.id}`).then((r) => r.data),
+    enabled: !!user?.id,
+  });
 
   if (!user) {
     return null;
   }
+
+  const activeRoles = profileUser?.role_assignments.filter((assignment) => assignment.status === "active") ?? [];
+  const roleText = activeRoles.length
+    ? activeRoles.map((assignment) => assignment.role.name).join(", ")
+    : "Sin rol asignado";
 
   return (
     <div className="mx-auto max-w-5xl space-y-6 pt-8">
@@ -32,13 +58,21 @@ export default function ProfilePage() {
           </div>
         </div>
 
-        <div className="mt-6 grid gap-4 sm:grid-cols-2">
+        <div className="mt-6 grid gap-4 md:grid-cols-3">
           <div className="rounded-xl bg-gray-50 p-4">
             <div className="flex items-center gap-2 text-sm font-medium text-gray-700">
               <Mail className="h-4 w-4 text-gray-400" />
               Correo electrónico
             </div>
             <p className="mt-2 text-sm text-gray-900">{user.email}</p>
+          </div>
+
+          <div className="rounded-xl bg-gray-50 p-4">
+            <div className="flex items-center gap-2 text-sm font-medium text-gray-700">
+              <UserCircle2 className="h-4 w-4 text-gray-400" />
+              Rol
+            </div>
+            <p className="mt-2 text-sm text-gray-900">{roleText}</p>
           </div>
 
           <div className="rounded-xl bg-gray-50 p-4">

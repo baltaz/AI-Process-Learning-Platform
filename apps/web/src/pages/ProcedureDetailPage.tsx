@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, ArrowLeft, CheckCircle2, FileText, Loader2, Sparkles, Trash2 } from "lucide-react";
@@ -52,9 +52,15 @@ interface ProcedureDetail {
   code: string;
   title: string;
   description?: string | null;
+  owner_role_id?: string | null;
   owner_role_name?: string | null;
   versions: ProcedureVersion[];
   incident_signals?: ProcedureIncidentSignal[];
+}
+
+interface RoleOption {
+  id: string;
+  name: string;
 }
 
 interface ProcedureIncidentSignal {
@@ -157,6 +163,21 @@ function getSeverityLabel(severity?: string | null) {
   return SEVERITY_LABELS[severity] ?? severity;
 }
 
+function getFindingTypeLabel(findingType: ProcedureIncidentSignal["finding_type"]) {
+  switch (findingType) {
+    case "not_followed":
+      return "No respetado";
+    case "needs_redefinition":
+      return "Requiere actualización";
+    case "missing_procedure":
+      return "Falta procedimiento";
+    case "contributing_factor":
+      return "Factor contribuyente";
+    default:
+      return findingType;
+  }
+}
+
 function formatDate(value?: string | null) {
   if (!value) return "Sin fecha";
   return new Date(value).toLocaleDateString("es-AR");
@@ -204,25 +225,6 @@ function buildGeneratedText(version: ProcedureVersion | null, signal: ProcedureI
 
   if (normalized.length > 0) {
     return Array.from(new Set(normalized));
-  }
-
-  const structure = getDisplayStructure(version);
-  if (structure) {
-    const summary: string[] = [];
-    if (structure.objectives.length > 0) {
-      summary.push(`Objetivos detectados: ${structure.objectives.join(", ")}.`);
-    }
-    if (structure.steps.length > 0) {
-      summary.push(`Pasos sugeridos: ${structure.steps.map((step) => step.title).join(", ")}.`);
-    }
-    if (structure.critical_points.length > 0) {
-      summary.push(
-        `Puntos críticos identificados: ${structure.critical_points.map((point) => point.text).join(", ")}.`
-      );
-    }
-    if (summary.length > 0) {
-      return summary;
-    }
   }
 
   if (version?.content_text?.trim()) {
@@ -283,7 +285,7 @@ function formatDateTime(value?: string | null) {
 }
 
 function SourceProcessingStatusCard({ version }: { version: ProcedureVersion }) {
-  if (!version.source_storage_key) return null;
+  if (!version.source_storage_key || version.source_processing_status === "READY") return null;
 
   const status = version.source_processing_status;
   const currentStageIndex = SOURCE_PROCESSING_FLOW.indexOf(status as (typeof SOURCE_PROCESSING_FLOW)[number]);
@@ -406,6 +408,7 @@ export default function ProcedureDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const [ownerRoleId, setOwnerRoleId] = useState("");
 
   const { data: procedure, isLoading } = useQuery<ProcedureDetail>({
     queryKey: ["procedure", id],
@@ -420,6 +423,10 @@ export default function ProcedureDetailPage() {
       );
       return hasActiveProcessing ? 3000 : false;
     },
+  });
+  const { data: roles = [] } = useQuery<RoleOption[]>({
+    queryKey: ["roles"],
+    queryFn: () => api.get("/roles").then((r) => r.data),
   });
 
   const latestUpdate = useMemo(() => {
@@ -457,6 +464,15 @@ export default function ProcedureDetailPage() {
       navigate("/procedures");
     },
   });
+  const linkOwnerRoleMutation = useMutation({
+    mutationFn: () => api.patch(`/procedures/${id}`, { owner_role_id: ownerRoleId || null }).then((r) => r.data),
+    onSuccess: () => {
+      setOwnerRoleId("");
+      queryClient.invalidateQueries({ queryKey: ["procedure", id] });
+      queryClient.invalidateQueries({ queryKey: ["procedures"] });
+      queryClient.invalidateQueries({ queryKey: ["roles"] });
+    },
+  });
 
   if (isLoading || !procedure) {
     return (
@@ -475,6 +491,7 @@ export default function ProcedureDetailPage() {
   ).size;
   const needsRedefinitionSignals = incidentSignals.filter((signal) => signal.finding_type === "needs_redefinition");
   const generatedText = buildGeneratedText(latestUpdate, primaryIncidentSignal);
+  const displayStructure = getDisplayStructure(latestUpdate);
 
   function handleDelete() {
     if (deleteMutation.isPending) return;
@@ -546,7 +563,7 @@ export default function ProcedureDetailPage() {
 
           <div className="mt-5 flex flex-wrap gap-2 text-xs text-gray-500">
             <span className="rounded-full bg-gray-100 px-2.5 py-1">
-              Owner: {procedure.owner_role_name || "Sin rol"}
+              Rol: {procedure.owner_role_name || "Sin rol"}
             </span>
             <span className="rounded-full bg-indigo-50 px-2.5 py-1 text-indigo-700">
               {procedure.versions.length} actualizaciones
@@ -570,7 +587,7 @@ export default function ProcedureDetailPage() {
             <div>
               <h2 className="text-xl font-semibold text-gray-900">Incidencias abiertas relacionadas</h2>
               <p className="mt-1 text-sm text-gray-500">
-                Hallazgos activos que afectan este procedimiento y pueden requerir acción correctiva o redefinición.
+                Hallazgos activos que afectan este procedimiento y pueden requerir acción correctiva o actualización.
               </p>
             </div>
             <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-medium text-gray-700">
@@ -581,12 +598,12 @@ export default function ProcedureDetailPage() {
           {needsRedefinitionSignals.length > 0 && (
             <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4">
               <p className="text-sm font-semibold text-amber-900">
-                Este procedimiento requiere redefinición según incidencias abiertas.
+                Este procedimiento requiere actualización según incidencias abiertas.
               </p>
               <p className="mt-1 text-sm text-amber-800">
                 Hay {needsRedefinitionSignals.length} hallazgo{needsRedefinitionSignals.length === 1 ? "" : "s"} de tipo
                 {" "}
-                <span className="font-medium">needs_redefinition</span> asociados a este procedimiento.
+                <span className="font-medium">requiere actualización</span> asociados a este procedimiento.
               </p>
             </div>
           )}
@@ -611,7 +628,7 @@ export default function ProcedureDetailPage() {
                                 : "border-slate-200 bg-slate-50 text-slate-700"
                         }`}
                       >
-                        {signal.finding_type}
+                        {getFindingTypeLabel(signal.finding_type)}
                       </span>
                       <span className="rounded-full bg-white px-2.5 py-1 text-[11px] text-gray-500">
                         {signal.finding_status}
@@ -668,11 +685,85 @@ export default function ProcedureDetailPage() {
               {primaryIncidentSignal.incident_description}
             </div>
           )}
+
+          {displayStructure?.objectives.length ? (
+            <div className="mb-5 rounded-2xl border border-gray-200 bg-white p-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-gray-700">Objetivo</p>
+              <div className="mt-2 space-y-2">
+                {displayStructure.objectives.map((objective, index) => (
+                  <p key={`${procedure.id}-objective-${index}`} className="text-sm font-medium leading-6 text-gray-800">
+                    {objective}
+                  </p>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {displayStructure?.critical_points.length ? (
+            <div className="mb-5 rounded-2xl border border-gray-200 bg-white p-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-gray-700">Puntos críticos identificados</p>
+              <div className="mt-3 space-y-3">
+                {displayStructure.critical_points.map((point, index) => (
+                  <div key={`${procedure.id}-critical-${index}`} className="rounded-xl border border-gray-200 px-4 py-3">
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <p className="text-sm font-semibold text-gray-900">{point.text}</p>
+                      {point.evidence?.segment_range && (
+                        <span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs text-gray-500">
+                          Evidencia: {point.evidence.segment_range}
+                        </span>
+                      )}
+                    </div>
+                    <p className="mt-1 text-sm leading-6 text-gray-700">{point.why}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
           <div className="space-y-4 text-sm leading-7 text-gray-700">
             {generatedText.map((paragraph, index) => (
               <p key={`${procedure.id}-generated-${index}`}>{paragraph}</p>
             ))}
           </div>
+
+          {displayStructure?.steps.length ? (
+            <div className="mt-6 border-t border-gray-100 pt-6">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900">Pasos detectados</h3>
+                  <p className="mt-1 text-sm text-gray-500">
+                    Secuencia sugerida a partir del contenido procesado de la actualización vigente.
+                  </p>
+                </div>
+                <span className="rounded-full bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-700">
+                  {displayStructure.steps.length} pasos
+                </span>
+              </div>
+
+              <div className="mt-5 space-y-3">
+                {displayStructure.steps.map((step, index) => (
+                  <div key={`${procedure.id}-step-${index}`} className="rounded-lg border border-gray-100 bg-gray-50 p-4">
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <p className="text-sm font-medium text-gray-800">
+                        {index + 1}. {step.title}
+                      </p>
+                      {step.evidence?.segment_range && (
+                        <span className="inline-flex items-center rounded-full bg-white px-2.5 py-1 text-xs text-gray-500">
+                          Evidencia: {step.evidence.segment_range}
+                        </span>
+                      )}
+                    </div>
+                    <p className="mt-1 text-sm text-gray-600">{step.description}</p>
+                    {step.origin && (
+                      <div className="mt-3 flex flex-wrap gap-2 text-xs text-gray-500">
+                        <span className="rounded-full bg-white px-2.5 py-1">Origen: {step.origin}</span>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
         </div>
       </section>
 
@@ -838,7 +929,28 @@ export default function ProcedureDetailPage() {
               {procedure.owner_role_name}
             </span>
           ) : (
-            <p className="text-sm text-gray-500">Este procedimiento todavía no tiene un owner visible asignado.</p>
+            <div className="flex w-full flex-col gap-3 sm:flex-row">
+              <select
+                value={ownerRoleId}
+                onChange={(event) => setOwnerRoleId(event.target.value)}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm sm:max-w-sm"
+              >
+                <option value="">Seleccionar rol</option>
+                {roles.map((role) => (
+                  <option key={role.id} value={role.id}>
+                    {role.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                disabled={!ownerRoleId || linkOwnerRoleMutation.isPending}
+                onClick={() => linkOwnerRoleMutation.mutate()}
+                className="rounded-lg border border-indigo-200 px-4 py-2 text-sm font-medium text-indigo-700 hover:bg-indigo-50 disabled:opacity-60"
+              >
+                {linkOwnerRoleMutation.isPending ? "Vinculando..." : "Vincular rol"}
+              </button>
+            </div>
           )}
         </div>
       </section>

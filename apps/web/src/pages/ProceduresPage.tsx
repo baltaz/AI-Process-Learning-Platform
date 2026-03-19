@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { BookCopy, Loader2, Plus } from "lucide-react";
+import { AlertTriangle, BookCopy, Loader2, Plus } from "lucide-react";
 import api from "@/services/api";
 
 interface ProcedureVersion {
@@ -17,6 +17,7 @@ interface Procedure {
   description?: string | null;
   owner_role_name?: string | null;
   latest_version?: ProcedureVersion | null;
+  requires_update?: boolean;
 }
 
 export default function ProceduresPage() {
@@ -67,9 +68,17 @@ export default function ProceduresPage() {
                   </p>
                   <h2 className="mt-1 text-lg font-semibold text-gray-900">{procedure.title}</h2>
                 </div>
-                <span className="rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-medium text-indigo-700">
-                  v{procedure.latest_version?.version_number ?? 0}
-                </span>
+                <div className="flex flex-wrap items-center gap-2">
+                  {procedure.requires_update && (
+                    <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700">
+                      <AlertTriangle className="h-3.5 w-3.5" />
+                      Requiere actualización
+                    </span>
+                  )}
+                  <span className="rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-medium text-indigo-700">
+                    v{procedure.latest_version?.version_number ?? 0}
+                  </span>
+                </div>
               </div>
               <p className="mt-3 line-clamp-2 text-sm text-gray-600">
                 {procedure.description || "Sin descripción cargada."}

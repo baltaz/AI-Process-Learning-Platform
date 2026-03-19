@@ -37,6 +37,7 @@ logger = logging.getLogger(__name__)
 
 FRAME_INTERVAL_SECONDS = 3
 SEGMENT_WINDOW_SECONDS = 10
+COMMON_MEDIA_BIN_PATHS = ("/opt/homebrew/bin", "/usr/local/bin")
 QUIZ_RESPONSE_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
@@ -549,6 +550,19 @@ def _map_provider_error(error: AIProviderError) -> str:
     return f"Error del proveedor de IA: {str(error)}"
 
 
+def _resolve_media_binary(name: str) -> str | None:
+    detected = shutil.which(name)
+    if detected:
+        return detected
+
+    for base_path in COMMON_MEDIA_BIN_PATHS:
+        candidate = os.path.join(base_path, name)
+        if os.path.exists(candidate):
+            return candidate
+
+    return None
+
+
 async def _stage_transcribe(provider: AIProvider, video_path: str) -> list[dict]:
     return await provider.transcribe_video(video_path)
 
@@ -558,14 +572,17 @@ async def _stage_frame_sampling(
 ) -> list[dict]:
     import subprocess
 
-    if shutil.which("ffprobe") is None or shutil.which("ffmpeg") is None:
+    ffprobe_path = _resolve_media_binary("ffprobe")
+    ffmpeg_path = _resolve_media_binary("ffmpeg")
+
+    if ffprobe_path is None or ffmpeg_path is None:
         raise RuntimeError(
             "FFmpeg no esta instalado. Instala ffmpeg/ffprobe para procesar videos "
             "(macOS: `brew install ffmpeg`)."
         )
 
     probe_cmd = [
-        "ffprobe", "-v", "error", "-show_entries", "format=duration",
+        ffprobe_path, "-v", "error", "-show_entries", "format=duration",
         "-of", "default=noprint_wrappers=1:nokey=1", video_path,
     ]
     result = subprocess.run(probe_cmd, capture_output=True, text=True)
@@ -574,12 +591,20 @@ async def _stage_frame_sampling(
     frames_dir = os.path.join(tmpdir, "frames")
     os.makedirs(frames_dir, exist_ok=True)
 
-    subprocess.run([
-        "ffmpeg", "-i", video_path,
-        "-vf", f"fps=1/{FRAME_INTERVAL_SECONDS}",
-        os.path.join(frames_dir, "frame_%04d.jpg"),
-        "-y", "-loglevel", "error",
-    ], check=True)
+    subprocess.run(
+        [
+            ffmpeg_path,
+            "-i",
+            video_path,
+            "-vf",
+            f"fps=1/{FRAME_INTERVAL_SECONDS}",
+            os.path.join(frames_dir, "frame_%04d.jpg"),
+            "-y",
+            "-loglevel",
+            "error",
+        ],
+        check=True,
+    )
 
     frame_files = sorted(
         [f for f in os.listdir(frames_dir) if f.endswith(".jpg")]
